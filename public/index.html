@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dakini AI Prospect Finder</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/">Dakini AI <span>Prospect Finder</span></a>
+    <nav aria-label="Main navigation">
+      <a href="#prospects">Prospects</a>
+      <a id="setupNav" href="#setup">ICP &amp; sources</a>
+    </nav>
+  </header>
+  <main class="container">
+    <section class="hero">
+      <div>
+        <p class="eyebrow">SALES PROSPECTING</p>
+        <h1>Find your next voice-agent customer</h1>
+        <p class="muted">Discover companies that could benefit from Dakini AI, see why they fit, and find their public business contacts.</p>
+      </div>
+      <p id="modeNotice" class="mode-notice"></p>
+    </section>
+
+    <section id="prospects" class="card results-card">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">YOUR LEAD LIST</p>
+          <h2>Potential Dakini AI clients</h2>
+        </div>
+        <div class="export-actions">
+          <button id="googleSheetsBtn" class="google-button" type="button" disabled>Connect Google Sheets</button>
+          <span id="googleStatus" class="muted" role="status"></span>
+        </div>
+      </div>
+      <p class="muted">Fit scores help prioritize research. They do not confirm purchase intent. Contact details are public company channels and may not identify a decision-maker.</p>
+      <div id="dashboard" class="stats"></div>
+      <div class="lead-controls">
+        <label class="search-label">Search companies
+          <input id="companySearch" type="search" placeholder="Company, use case, email or phone">
+        </label>
+        <label>Fit
+          <select id="tierFilter">
+            <option value="all">All prospects</option>
+            <option value="Priority">High-potential</option>
+            <option value="Review">Research</option>
+            <option value="Low fit">Lower fit</option>
+          </select>
+        </label>
+      </div>
+      <p id="resultCount" class="muted result-count"></p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">Rank</th>
+              <th scope="col">Company</th>
+              <th scope="col">Fit</th>
+              <th scope="col">Voice-agent opportunity</th>
+              <th scope="col">Public contact</th>
+              <th scope="col">Details</th>
+            </tr>
+          </thead>
+          <tbody id="companies"></tbody>
+        </table>
+      </div>
+      <div class="pagination">
+        <button id="prevPage" type="button" class="secondary-button">Previous</button>
+        <span id="pageLabel" class="muted"></span>
+        <button id="nextPage" type="button" class="secondary-button">Next</button>
+      </div>
+    </section>
+
+    <details id="setup" class="card setup-card">
+      <summary>
+        <span><span class="eyebrow">TARGETING &amp; DATA</span><strong>ICP, sources &amp; crawl controls</strong></span>
+        <span class="muted">Configure target companies or run another crawl</span>
+      </summary>
+      <div class="setup-grid">
+        <section class="setup-panel">
+          <h2>Define your ICP</h2>
+          <p class="muted">Set industries, locations, and Dakini AI voice-agent use cases.</p>
+          <form id="icpForm">
+            <input id="icpName" placeholder="ICP name" value="AI Voice Agent - BFSI">
+            <input id="industries" placeholder="Industries" value="BFSI">
+            <input id="locations" placeholder="Locations" value="India">
+            <input id="useCases" placeholder="Use cases" value="Collections, Customer Support">
+            <button>Create ICP</button>
+          </form>
+          <pre id="icpResult"></pre>
+        </section>
+        <section class="setup-panel">
+          <h2>Add an approved source</h2>
+          <p class="muted">Add a company website or a public directory containing company links.</p>
+          <form id="sourceForm">
+            <input id="sourceName" placeholder="Source name" value="Company Directory">
+            <input id="sourceUrl" type="url" placeholder="https://example.com" value="https://rbi.org.in/scripts/banklinks.aspx">
+            <label class="checkbox-label"><input id="approved" type="checkbox" checked> Approved</label>
+            <button>Add Source</button>
+          </form>
+          <pre id="sourceResult"></pre>
+        </section>
+        <section class="setup-panel crawl-panel">
+          <h2>Run a prospect crawl</h2>
+          <p class="muted">Crawls approved sources, discovers directory-listed companies, and checks relevant pages on company sites.</p>
+          <button id="crawlBtn" type="button">Run ICP Crawl</button>
+          <pre id="jobResult">No crawl running.</pre>
+        </section>
+      </div>
+    </details>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>
