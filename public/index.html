@@ -3,14 +3,15 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Dakini AI Prospect Finder</title>
+  <title>Dakini AI ICP Scraper</title>
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
   <header class="topbar">
-    <a class="brand" href="/">Dakini AI <span>Prospect Finder</span></a>
+    <a class="brand" href="/">Dakini AI <span>ICP Scraper</span></a>
     <nav aria-label="Main navigation">
       <a href="#prospects">Prospects</a>
+      <a href="#techUpdates">Tech brief</a>
       <a id="setupNav" href="#setup">ICP &amp; sources</a>
     </nav>
   </header>
@@ -22,6 +23,28 @@
         <p class="muted">Discover companies that could benefit from Dakini AI, see why they fit, and find their public business contacts.</p>
       </div>
       <p id="modeNotice" class="mode-notice"></p>
+    </section>
+
+    <section class="discovery-banner">
+      <div>
+        <p class="eyebrow">DAILY INTERNET DISCOVERY</p>
+        <h2>Daily goal: 100 new qualified prospects</h2>
+        <p id="discoveryStatus" class="muted">Checking search setup…</p>
+      </div>
+      <button id="runDiscoveryBtn" type="button" disabled>Run discovery now</button>
+    </section>
+
+    <section id="techUpdates" class="card tech-card">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">DAILY RELEASE RADAR</p>
+          <h2>AI Tech Scout</h2>
+        </div>
+        <button id="refreshTechBtn" type="button">Refresh tech brief</button>
+      </div>
+      <p class="muted">A daily, source-linked roundup of reported AI, voice, automation, and other technology releases. Headlines and summaries come from news search; open the publisher link to verify details.</p>
+      <p id="techUpdatesStatus" class="status-note" role="status">Loading the latest technology brief…</p>
+      <div id="techUpdatesList" class="tech-updates-list"></div>
     </section>
 
     <section id="prospects" class="card results-card">
@@ -36,6 +59,26 @@
         </div>
       </div>
       <p class="muted">Fit scores help prioritize research. They do not confirm purchase intent. Contact details are public company channels and may not identify a decision-maker.</p>
+      <details class="score-guide">
+        <summary>How is the potential-client score measured?</summary>
+        <p class="muted">The score reflects evidence that Dakini AI's published customer-service, sales, and knowledge agents could help this company through multilingual support, customer-context lookup, human escalation, and system integrations. AI/voice/contact-center solution vendors are penalized as competitors. <a href="https://www.dakini-ai.com/" target="_blank" rel="noopener noreferrer">View Dakini AI's public capabilities</a>. This is a prospecting heuristic, not a purchase probability.</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th scope="col">Signal</th><th scope="col">Maximum</th><th scope="col">How points are awarded</th></tr></thead>
+            <tbody>
+              <tr><td>Service fit</td><td>35</td><td>15 for the first confirmed Dakini workflow (customer service, sales/lead qualification/follow-up, knowledge/FAQs, or product recommendations), 10 for the second, then 5 each up to 35. Adjacent needs are shown as suggestions but do not add service-fit points.</td></tr>
+              <tr><td>Operating scale</td><td>20</td><td>5 for a customer-service/sales calling team, 4 for multiple branches, 6 for high call/customer volumes or peak demand, and 5 for explicit 24/7 or extended-hours evidence.</td></tr>
+              <tr><td>India and language fit</td><td>15</td><td>8 for evidence of an India market presence and 7 for multilingual, regional-language, dialect, or accent needs.</td></tr>
+              <tr><td>Integration readiness</td><td>10</td><td>6 for CRM/telephony/contact-center systems and 4 for APIs, customer records, or integration evidence.</td></tr>
+              <tr><td>Buying / growth signals</td><td>15</td><td>10 for explicit evaluation or adoption of AI/voice automation, 3 for relevant voice/customer-service/sales hiring, and 2 for expansion.</td></tr>
+              <tr><td>Public contactability</td><td>5</td><td>3 for a public business email and 2 for a phone number.</td></tr>
+              <tr><td>AI vendor exclusion</td><td>Score cap: 20</td><td>AI voice-agent, conversational AI, or contact-center solution providers are treated as competitors, excluded from High potential/Research, and capped at 20.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="muted"><strong>High potential:</strong> score ≥70, configured ICP criteria match, a Dakini-aligned workflow is detected, and an explicit buying/automation signal is present. <strong>Research:</strong> score ≥45, ICP criteria match, and at least one aligned workflow is detected. ICP industry, use-case, and location settings gate the tier but do not add score points. Workflow opportunities inferred from adjacent use cases should be validated with the prospect.</p>
+      </details>
+      <p id="googleSetupHelp" class="google-help"></p>
       <div id="dashboard" class="stats"></div>
       <div class="lead-controls">
         <label class="search-label">Search companies
@@ -79,9 +122,14 @@
         <span class="muted">Configure target companies or run another crawl</span>
       </summary>
       <div class="setup-grid">
+        <section class="setup-panel crawl-panel">
+          <h2>Daily web discovery</h2>
+          <p class="muted">Searches recent public web results for companies buying voice automation or showing high-volume calling workflows across any industry. Scheduled for 09:00 Asia/Kolkata while this server is running.</p>
+          <p id="discoverySetupStatus" class="status-note"></p>
+        </section>
         <section class="setup-panel">
           <h2>Define your ICP</h2>
-          <p class="muted">Set industries, locations, and Dakini AI voice-agent use cases.</p>
+          <p class="muted">Optional for daily discovery. The automatic search targets voice-agent fit across all industries.</p>
           <form id="icpForm">
             <input id="icpName" placeholder="ICP name" value="AI Voice Agent - BFSI">
             <input id="industries" placeholder="Industries" value="BFSI">
@@ -104,7 +152,7 @@
         </section>
         <section class="setup-panel crawl-panel">
           <h2>Run a prospect crawl</h2>
-          <p class="muted">Crawls approved sources, discovers directory-listed companies, and checks relevant pages on company sites.</p>
+          <p class="muted">Crawls approved sources, discovers directory-listed companies, and checks up to eight relevant pages per company.</p>
           <button id="crawlBtn" type="button">Run ICP Crawl</button>
           <pre id="jobResult">No crawl running.</pre>
         </section>
