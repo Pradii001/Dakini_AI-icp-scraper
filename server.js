@@ -19,15 +19,10 @@ const WEB_SEARCH_PROVIDER = BRAVE_SEARCH_API_KEY
   : FIRECRAWL_API_KEY ? "Firecrawl (authenticated)" : "Firecrawl (free keyless)";
 const DISCOVERY_TIME = process.env.DISCOVERY_TIME || "09:00";
 const DISCOVERY_TIME_ZONE = process.env.DISCOVERY_TIME_ZONE || "Asia/Kolkata";
-const DAILY_NEW_PROSPECT_TARGET = 100;
-const MAX_DAILY_DISCOVERY_COMPANIES = 200;
-const MAX_RESULTS_PER_SEARCH = 10;
-const DISCOVERY_REFRESH_DAYS = 30;
+const MAX_RESULTS_PER_SEARCH = BRAVE_SEARCH_API_KEY ? 20 : 100;
 const MAX_PAGES_PER_COMPANY = 8;
 const DISCOVERY_CRAWL_CONCURRENCY = 4;
 const SCORE_VERSION = 3;
-const TECH_UPDATE_RESULTS_PER_QUERY = 6;
-const MAX_TECH_STORY_AGE_DAYS = 7;
 
 if (!/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(DISCOVERY_TIME)) {
   throw new Error("DISCOVERY_TIME must be a valid 24-hour time such as 09:00.");
@@ -49,20 +44,22 @@ const icps = new Map();
 const sources = new Map();
 const jobs = new Map();
 const companies = new Map();
+const sourceCandidates = new Map();
 const googleOAuthStates = new Map();
 const googleConnections = new Map();
 const discoveryState = {
   lastRunAt: null,
   lastRunSummary: null,
   lastError: "",
+  lastPublicDirectoryRetrievalAt: null,
+  lastPublicDirectoryRetrievalSummary: null,
+  lastPublicDirectoryRetrievalError: "",
+  activeSourceDiscoveryJobId: null,
+  lastSourceDiscoveryAt: null,
+  lastSourceDiscoverySummary: null,
+  lastSourceDiscoveryError: "",
   nextRunAt: null,
   activeJobId: null
-};
-const technologyState = {
-  items: [],
-  lastUpdatedAt: null,
-  lastError: "",
-  refreshing: false
 };
 let lastFreeSearchStartedAt = 0;
 
@@ -73,8 +70,8 @@ function persistState() {
     sources: [...sources.values()],
     jobs: [...jobs.values()],
     companies: [...companies.values()],
-    discoveryState,
-    technologyState
+    sourceCandidates: [...sourceCandidates.values()],
+    discoveryState
   };
   fs.mkdirSync(path.dirname(STATE_FILE), { recursive: true });
   const temporaryFile = `${STATE_FILE}.tmp`;
@@ -94,9 +91,21 @@ function restoreState() {
   for (const value of values(state.sources)) sources.set(value.id, value);
   for (const value of values(state.jobs)) jobs.set(value.id, value);
   for (const value of values(state.companies)) companies.set(value.id, value);
+  for (const value of values(state.sourceCandidates)) sourceCandidates.set(value.id, value);
   Object.assign(discoveryState, state.discoveryState || {});
-  Object.assign(technologyState, state.technologyState || {});
-  technologyState.refreshing = false;
+  if (discoveryState.lastRunSummary) {
+    const summary = discoveryState.lastRunSummary;
+    summary.qualifiedProspectsAdded ??= summary.newQualifiedProspects || 0;
+    delete summary.newQualifiedProspects;
+    delete summary.target;
+    delete summary.targetMet;
+  }
+  if (/daily (?:qualified )?prospects|daily target/i.test(discoveryState.lastError)) {
+    discoveryState.lastError = discoveryState.lastError
+      .replace(/\s*Reached \d+ of \d+ daily qualified prospects\.?/i, "")
+      .replace(/Discovery found \d+ new qualified prospects, below the daily target of \d+\..*$/i, "")
+      .trim();
+  }
   if (discoveryState.activeJobId) {
     const interruptedJob = jobs.get(discoveryState.activeJobId);
     if (interruptedJob && ["running", "queued"].includes(interruptedJob.status)) {
@@ -106,9 +115,22 @@ function restoreState() {
     }
     discoveryState.activeJobId = null;
   }
+  if (discoveryState.activeSourceDiscoveryJobId) {
+    const interruptedJob = jobs.get(discoveryState.activeSourceDiscoveryJobId);
+    if (interruptedJob && ["running", "queued"].includes(interruptedJob.status)) {
+      interruptedJob.status = "interrupted";
+      interruptedJob.completedAt = new Date().toISOString();
+      interruptedJob.error = "Server restarted while source discovery was running.";
+    }
+    discoveryState.activeSourceDiscoveryJobId = null;
+  }
 }
 
 restoreState();
+
+function hasActiveCrawlJob() {
+  return [...jobs.values()].some(job => ["queued", "running"].includes(job.status));
+}
 
 const ICP = z.object({
   name: z.string().min(1),
@@ -445,14 +467,34 @@ function getDakiniRecommendations(useCases) {
 
 function extractPageText(html) {
   const $ = cheerio.load(html);
+  const contactLinks = $("a[href]").map((_, element) => {
+    const href = $(element).attr("href") || "";
+    if (/^mailto:/i.test(href)) return `Email: ${href.slice(7).split("?")[0]}`;
+    if (/^tel:/i.test(href)) return `Phone: ${href.slice(4).split("?")[0]}`;
+    return "";
+  }).get().filter(Boolean);
   $("script, style, noscript, svg").remove();
   const title = $("title").text().trim();
   const description = $('meta[name="description"]').attr("content")?.trim() || "";
-  const body = $("body").find("h1, h2, h3, p, li").map((_, element) =>
+  const bodySegments = $("body").find("h1, h2, h3, p, li, th, td, address").map((_, element) =>
     $(element).text().replace(/\s+/g, " ").trim()
-  ).get().filter(Boolean).join(" | ") || $("body").text().replace(/\s+/g, " ").trim();
-  const text = [title, description, body].filter(Boolean).join(" | ");
+  ).get().filter(Boolean);
+  const body = [...new Set(bodySegments)].join(" | ") || $("body").text().replace(/\s+/g, " ").trim();
+  const text = [title, description, body, ...new Set(contactLinks)].filter(Boolean).join(" | ");
   return { $, title, text: text.slice(0, 100000) };
+}
+
+function companyNameFromWebsite(homepage, url) {
+  const siteName = homepage.$('meta[property="og:site_name"]').attr("content")?.trim() ||
+    homepage.$('meta[name="application-name"]').attr("content")?.trim() ||
+    homepage.$('[itemprop="name"]').first().attr("content")?.trim() ||
+    homepage.$('[itemprop="name"]').first().text().trim();
+  if (siteName && siteName.length <= 100) return siteName;
+  const titleName = homepage.title.split(/\s+[|:–—]\s+/)[0].trim();
+  if (titleName && titleName.length <= 100 && !/^(home|homepage|welcome|official website)$/i.test(titleName)) {
+    return titleName;
+  }
+  return new URL(url).hostname.replace(/^www\./i, "");
 }
 
 function extractRelevantPageLinks($, baseUrl) {
@@ -478,7 +520,8 @@ function extractRelevantPageLinks($, baseUrl) {
       candidates.set(normalizedUrl, {
         url: normalizedUrl,
         label,
-        priority: /product|service|solution|agent|platform|integration|case-stud|customer|industry|support|knowledge|faq/i.test(`${url.pathname} ${label}`) ? 4 :
+        priority: /contact|customer-care|help|grievance|support/i.test(`${url.pathname} ${label}`) ? 5 :
+          /product|service|solution|agent|platform|integration|case-stud|customer|industry|knowledge|faq/i.test(`${url.pathname} ${label}`) ? 4 :
           /career|job|contact|about|who-we-are|our-story|business/i.test(`${url.pathname} ${label}`) ? 3 : 1
       });
     } catch {
@@ -511,6 +554,68 @@ function extractBankLinks($, sourceUrl) {
   });
 
   return bankLinks;
+}
+
+function extractLifeInsurerLinks($, sourceUrl) {
+  const seenDomains = new Set();
+  const insurers = [];
+
+  $("a[onclick]").each((_, element) => {
+    const name = $(element).text().replace(/\s+/g, " ").trim();
+    const redirect = $(element).attr("onclick")?.match(/redirectExternal\(\s*['"]([^'"]+)['"]\s*\)/i);
+    if (!name || !redirect || !/\binsurance\b|\binsurer\b/i.test(name)) return;
+
+    try {
+      const url = new URL(redirect[1], sourceUrl);
+      if (!["http:", "https:"].includes(url.protocol) || !isEligibleProspectUrl(url.href)) return;
+      const domain = normalizeDomain(url.href);
+      if (seenDomains.has(domain)) return;
+      seenDomains.add(domain);
+      insurers.push({ name, url: url.href });
+    } catch {
+      return;
+    }
+  });
+
+  return insurers;
+}
+
+function extractGenericDirectoryCompanies($, sourceUrl) {
+  const baseDomain = normalizeDomain(sourceUrl);
+  const seenDomains = new Set();
+  const companies = [];
+  $("a[href]").each((_, element) => {
+    const name = $(element).text().replace(/\s+/g, " ").trim();
+    const href = $(element).attr("href") || "";
+    if (!name || name.length < 2 || name.length > 120 ||
+        /^(home|about|contact|privacy|terms|login|sign in|read more|website|visit)$/i.test(name) ||
+        /\.(pdf|jpg|jpeg|png|gif|zip|docx?)(?:$|\?)/i.test(href)) return;
+    try {
+      const url = new URL(href, sourceUrl);
+      const domain = normalizeDomain(url.href);
+      if (!isEligibleProspectUrl(url.href) || domain === baseDomain || seenDomains.has(domain)) return;
+      seenDomains.add(domain);
+      companies.push({ name, url: url.href });
+    } catch {
+      return;
+    }
+  });
+  return companies;
+}
+
+function extractPublicDirectoryCompanies($, sourceUrl, source = {}) {
+  if (normalizeDomain(sourceUrl) === "rbi.org.in" &&
+      new URL(sourceUrl).pathname.toLowerCase() === "/scripts/banklinks.aspx") {
+    return extractBankLinks($, sourceUrl);
+  }
+  if (normalizeDomain(sourceUrl) === "irdai.gov.in" &&
+      new URL(sourceUrl).pathname.toLowerCase() === "/insurers/life-insurers") {
+    return extractLifeInsurerLinks($, sourceUrl);
+  }
+  if (source.directoryMode === "generic") {
+    return extractGenericDirectoryCompanies($, sourceUrl);
+  }
+  return [];
 }
 
 const DISCOVERY_INDUSTRIES = [
@@ -549,12 +654,6 @@ const DISCOVERY_QUERIES = [
   ),
   ...DISCOVERY_BUYING_SIGNAL_QUERIES
 ];
-const TECH_UPDATE_QUERIES = [
-  'AI technology new product launch announced released this week',
-  'voice AI agent new product launch announced released',
-  'technology startup launches new product software device platform today'
-];
-
 const NON_PROSPECT_DOMAINS = new Set([
   "google.com", "bing.com", "brave.com", "duckduckgo.com",
   "youtube.com", "facebook.com", "instagram.com", "x.com", "twitter.com",
@@ -562,6 +661,26 @@ const NON_PROSPECT_DOMAINS = new Set([
   "techcrunch.com", "g2.com", "capterra.com", "amazon.com", "quora.com",
   "indeed.com", "glassdoor.com", "naukri.com", "ambitionbox.com"
 ]);
+const PUBLIC_SOURCE_CATALOG = [
+  {
+    id: "rbi-bank-links",
+    name: "Reserve Bank of India — Bank Links",
+    url: "https://rbi.org.in/scripts/banklinks.aspx",
+    description: "Official links to banks operating in India."
+  },
+  {
+    id: "irdai-life-insurers",
+    name: "IRDAI — Life Insurers",
+    url: "https://irdai.gov.in/insurers/life-insurers",
+    description: "Official list linking to registered life-insurance company websites."
+  }
+];
+const SOURCE_DISCOVERY_QUERY_TEMPLATES = [
+  '"{industry}" "{location}" official regulator list licensed companies directory',
+  '"{industry}" "{location}" association member directory companies',
+  '"{industry}" "{location}" registered companies public directory list'
+];
+const MAX_SOURCE_CANDIDATES_TO_VALIDATE = 12;
 
 function isEligibleProspectUrl(value) {
   try {
@@ -576,23 +695,6 @@ function isEligibleProspectUrl(value) {
   }
 }
 
-function isHttpUrl(value) {
-  try {
-    return ["http:", "https:"].includes(new URL(value).protocol);
-  } catch {
-    return false;
-  }
-}
-
-function companyNameFromSearchTitle(title, url) {
-  const atCompany = title.match(/\b(?:at|from|for)\s+([A-Z][\w&.' -]{1,70})(?:\||$)/);
-  if (atCompany) return atCompany[1].trim();
-  const firstSegment = title.split(/\s+[|:–—]\s+/)[0].trim();
-  const genericTitle = /voice agent|voice ai|customer service|customer support|call center|contact center|hiring|career|job opening|procurement|request for proposal|RFP|automation/i;
-  if (firstSegment && !genericTitle.test(firstSegment) && firstSegment.length <= 70) return firstSegment;
-  return new URL(url).hostname.replace(/^www\./i, "");
-}
-
 function scoreSearchEvidence(evidence) {
   const text = evidence.map(item => `${item.title} ${item.description}`).join(" ").toLowerCase();
   return (
@@ -602,6 +704,28 @@ function scoreSearchEvidence(evidence) {
     (/\b(multilingual|indian languages|hindi|tamil|telugu|marathi|24\/7|high[- ]volume|thousands of calls)\b/.test(text) ? 3 : 0) +
     Math.min(evidence.length, 4)
   );
+}
+
+function selectDailyDiscoveryQueries(now = new Date()) {
+  const dayNumber = Math.floor(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()) / 86400000);
+  const industryQueries = DISCOVERY_INDUSTRIES.map((_, industryIndex) => {
+    const templateIndex = (dayNumber + industryIndex) % DISCOVERY_QUERY_TEMPLATES.length;
+    return industryIndex * DISCOVERY_QUERY_TEMPLATES.length + templateIndex;
+  });
+  const buyingQueryStart = (dayNumber * 2) % DISCOVERY_BUYING_SIGNAL_QUERIES.length;
+  const buyingQueries = Array.from({ length: DISCOVERY_BUYING_SIGNAL_QUERIES.length }, (_, index) =>
+    DISCOVERY_INDUSTRIES.length * DISCOVERY_QUERY_TEMPLATES.length +
+    (buyingQueryStart + index) % DISCOVERY_BUYING_SIGNAL_QUERIES.length
+  );
+  const remainingIndustryQueries = Array.from({ length: DISCOVERY_QUERY_TEMPLATES.length - 1 }, (_, round) =>
+    DISCOVERY_INDUSTRIES.flatMap((_, industryIndex) => {
+      const templateIndex = (dayNumber + industryIndex + round + 1) % DISCOVERY_QUERY_TEMPLATES.length;
+      return [industryIndex * DISCOVERY_QUERY_TEMPLATES.length + templateIndex];
+    })
+  ).flat();
+  const prioritizedIndices = [...industryQueries, ...buyingQueries, ...remainingIndustryQueries];
+  return [...new Set(prioritizedIndices)]
+    .map(index => DISCOVERY_QUERIES[index]);
 }
 
 function isAiSolutionProviderEvidence(evidence) {
@@ -618,13 +742,12 @@ async function waitForSearchRateLimit() {
   lastFreeSearchStartedAt = Date.now();
 }
 
-async function searchWeb(query, resultType = "web", limit = MAX_RESULTS_PER_SEARCH) {
+async function searchWeb(query, limit = MAX_RESULTS_PER_SEARCH) {
   const firecrawl = !BRAVE_SEARCH_API_KEY;
   const url = new URL("https://api.search.brave.com/res/v1/web/search");
   if (!firecrawl) {
     url.searchParams.set("q", query);
     url.searchParams.set("count", String(limit));
-    if (resultType === "news") url.searchParams.set("freshness", "pd");
   }
   const response = await fetch(
     firecrawl
@@ -641,7 +764,7 @@ async function searchWeb(query, resultType = "web", limit = MAX_RESULTS_PER_SEAR
           }
         : { "Accept": "application/json", "X-Subscription-Token": BRAVE_SEARCH_API_KEY },
       body: firecrawl
-        ? JSON.stringify({ query, limit, sources: [resultType] })
+        ? JSON.stringify({ query, limit, sources: ["web"] })
         : undefined
     }
   );
@@ -651,140 +774,32 @@ async function searchWeb(query, resultType = "web", limit = MAX_RESULTS_PER_SEAR
     throw new Error(`Firecrawl search failed: ${data.error || "unknown provider error"}`);
   }
   const results = firecrawl
-    ? data.data?.[resultType] || []
+    ? data.data?.web || []
     : data.web?.results || [];
   return results
-    .filter(result => result.url && (resultType === "news" ? isHttpUrl(result.url) : isEligibleProspectUrl(result.url)))
+    .filter(result => result.url && isEligibleProspectUrl(result.url))
     .map(result => ({
       url: result.url,
       title: String(result.title || "").slice(0, 240),
-      description: String(result.description || result.snippet || "").slice(0, resultType === "news" ? 500 : 1000),
-      publishedAt: String(result.date || result.age || result.page_age || "").slice(0, 80)
+      description: String(result.description || result.snippet || "").slice(0, 1000)
     }));
 }
 
-function categorizeTechnologyRelease(text) {
-  const lower = text.toLowerCase();
-  if (/voice ai|speech|voice agent|conversational ai|text.to.speech|speech.to.text/.test(lower)) {
-    return { category: "Voice & speech AI", relevance: "High" };
-  }
-  if (/customer service|customer support|contact center|call center|service agent/.test(lower)) {
-    return { category: "Customer operations", relevance: "High" };
-  }
-  if (/\bai agent|agentic|\bagents?\b|artificial intelligence|large language model|\bllm\b|foundation model|generative ai/.test(lower)) {
-    return { category: "AI & agents", relevance: "High" };
-  }
-  if (/automation|robotics|workflow|customer experience/.test(lower)) {
-    return { category: "Automation & robotics", relevance: "Medium" };
-  }
-  return { category: "Technology release", relevance: "Explore" };
-}
-
-function isTechnologyRelease(item) {
-  const title = item.title.toLowerCase();
-  if (/\b(stocks?|investing|market outlook|trend report|trends|tracker|roundup|weekly|newsletter|best \d*|top \d*|latest .* news|everything we announced|could|may|might|expected|reportedly|rumou?red)\b/i.test(title)) {
-    return false;
-  }
-  return /\b(launch(?:es|ed|ing)?|release(?:s|d)?|announc(?:e|es|ed|ing)|unveil(?:s|ed|ing)?|introduc(?:e|es|ed|ing)|debut(?:s|ed|ing)?|roll(?:s|ed)? out|ship(?:s|ped|ping)?|available now|preview(?:s|ed)?)\b/i
-    .test(`${item.title} ${item.description.slice(0, 240)}`);
-}
-
-function technologyStoryAgeDays(publishedAt) {
-  const value = publishedAt.trim().toLowerCase();
-  if (!value) return null;
-  if (value === "today") return 0;
-  if (value === "yesterday") return 1;
-  const relative = value.match(/^(\d+)\s+(minute|hour|day|week|month|year)s?\s+ago$/);
-  if (relative) {
-    const amount = Number(relative[1]);
-    const unitDays = {
-      minute: 1 / 1440,
-      hour: 1 / 24,
-      day: 1,
-      week: 7,
-      month: 30,
-      year: 365
-    };
-    return amount * unitDays[relative[2]];
-  }
-  const timestamp = Date.parse(publishedAt);
-  return Number.isNaN(timestamp)
-    ? null
-    : Math.max(0, (Date.now() - timestamp) / (24 * 60 * 60 * 1000));
-}
-
-async function refreshTechnologyDigest() {
-  if (technologyState.refreshing) return;
-  technologyState.refreshing = true;
-  technologyState.lastError = "";
-  technologyState.searchesCompleted = 0;
-  technologyState.startedAt = new Date().toISOString();
-  persistState();
-  const updates = new Map();
-  const errors = [];
-
-  try {
-    for (const query of TECH_UPDATE_QUERIES) {
-      technologyState.currentQuery = query;
-      try {
-        await waitForSearchRateLimit();
-        const results = await searchWeb(query, "news", TECH_UPDATE_RESULTS_PER_QUERY);
-        for (const result of results) {
-          if (!isTechnologyRelease(result)) continue;
-          const ageDays = technologyStoryAgeDays(result.publishedAt);
-          if (ageDays !== null && ageDays > MAX_TECH_STORY_AGE_DAYS) continue;
-          const key = result.url.toLowerCase().replace(/\/$/, "");
-          const { category, relevance } = categorizeTechnologyRelease(result.title);
-          const item = {
-            ...result,
-            category,
-            relevance,
-            ageDays,
-            discoveredAt: new Date().toISOString()
-          };
-          if (!updates.has(key)) updates.set(key, item);
-        }
-      } catch (error) {
-        errors.push(error.message);
-      }
-      technologyState.searchesCompleted += 1;
-      persistState();
-    }
-
-    if (updates.size) {
-      technologyState.items = [...updates.values()]
-        .sort((a, b) =>
-          (a.ageDays ?? 15) - (b.ageDays ?? 15) ||
-          (b.relevance === "High") - (a.relevance === "High")
-        )
-        .slice(0, 18);
-      technologyState.lastUpdatedAt = new Date().toISOString();
-    } else if (!errors.length) {
-      technologyState.items = [];
-      technologyState.lastUpdatedAt = new Date().toISOString();
-    }
-    technologyState.lastError = errors.length
-      ? `${errors.length} technology news search(es) failed: ${errors.join("; ")}`
-      : updates.size ? "" : "No news results dated within the past 14 days were returned.";
-  } finally {
-    technologyState.refreshing = false;
-    persistState();
-  }
-}
-
 function createDiscoveryJob(kind) {
+  const searchQueries = selectDailyDiscoveryQueries();
   return {
     id: id(),
     kind,
     status: "queued",
     searchesCompleted: 0,
+    totalSearchQueries: searchQueries.length,
+    searchQueries,
     searchResults: 0,
     companiesVisited: 0,
     pages: 0,
     records: 0,
-    newQualifiedProspects: 0,
     newHighPotentialProspects: 0,
-    targetMet: false,
+    qualifiedProspectsAdded: 0,
     rateLimited: false,
     maxPagesPerCompany: MAX_PAGES_PER_COMPANY,
     discoveredCompanies: [],
@@ -820,7 +835,7 @@ async function runDiscoveryJob(job) {
   persistState();
 
   try {
-    for (const query of DISCOVERY_QUERIES) {
+    for (const query of job.searchQueries) {
       job.currentQuery = query;
       try {
         await waitForSearchRateLimit();
@@ -830,7 +845,6 @@ async function runDiscoveryJob(job) {
           const existing = prospectsByDomain.get(domain) || {
             domain,
             url: new URL(result.url).origin,
-            companyName: companyNameFromSearchTitle(result.title, result.url),
             evidence: []
           };
           if (!existing.evidence.some(item => item.url === result.url)) {
@@ -857,21 +871,13 @@ async function runDiscoveryJob(job) {
       .filter(prospect => !isAiSolutionProviderEvidence(prospect.evidence))
       .sort((a, b) => scoreSearchEvidence(b.evidence) - scoreSearchEvidence(a.evidence) ||
         b.evidence.length - a.evidence.length)
-      .filter(prospect => {
-        const existing = companies.get(prospect.domain);
-        if (!existing?.capturedAt) return true;
-        return Date.now() - new Date(existing.capturedAt).getTime() >=
-          DISCOVERY_REFRESH_DAYS * 24 * 60 * 60 * 1000;
-      })
-      .slice(0, MAX_DAILY_DISCOVERY_COMPANIES)
-      .map(prospect => ({ ...prospect, isNewProspect: !companies.has(prospect.domain) }));
-    job.discoveredCompanies = prospects.map(({ domain, url, companyName }) => ({ domain, url, companyName }));
+      .filter(prospect => !companies.has(prospect.domain));
+    job.discoveredCompanies = prospects.map(({ domain, url }) => ({ domain, url }));
 
     let nextProspectIndex = 0;
     const workerCount = Math.min(DISCOVERY_CRAWL_CONCURRENCY, prospects.length);
     await Promise.all(Array.from({ length: workerCount }, async () => {
-      while (nextProspectIndex < prospects.length &&
-          job.newQualifiedProspects < DAILY_NEW_PROSPECT_TARGET) {
+      while (nextProspectIndex < prospects.length) {
         const prospect = prospects[nextProspectIndex];
         nextProspectIndex += 1;
         const evidencePages = prospect.evidence.map(item => ({
@@ -884,18 +890,18 @@ async function runDiscoveryJob(job) {
           job,
           prospect.url,
           genericVoiceAgentIcp,
-          prospect.companyName,
+          undefined,
           "",
           WEB_SEARCH_PROVIDER.toLowerCase().replaceAll(" ", "-"),
           undefined,
           evidencePages,
           true
         );
-        if (prospect.isNewProspect && companyRecord &&
-            ["Priority", "Review"].includes(companyRecord.score.tier)) {
-          job.newQualifiedProspects += 1;
+        if (companyRecord && ["Priority", "Review"].includes(companyRecord.score.tier)) {
+          job.qualifiedProspectsAdded += 1;
           if (companyRecord.score.tier === "Priority") job.newHighPotentialProspects += 1;
-          job.targetMet = job.newQualifiedProspects >= DAILY_NEW_PROSPECT_TARGET;
+        } else if (companyRecord) {
+          companies.delete(normalizeDomain(prospect.url));
         }
         if (job.companiesVisited > 0 && job.companiesVisited % 5 === 0) persistState();
       }
@@ -905,25 +911,18 @@ async function runDiscoveryJob(job) {
     job.completedAt = new Date().toISOString();
     discoveryState.lastRunAt = job.completedAt;
     discoveryState.lastRunSummary = {
-      newQualifiedProspects: job.newQualifiedProspects,
+      qualifiedProspectsAdded: job.qualifiedProspectsAdded,
       newHighPotentialProspects: job.newHighPotentialProspects,
-      target: DAILY_NEW_PROSPECT_TARGET,
       sitesVisited: job.companiesVisited,
       pagesScanned: job.pages,
       errors: job.errors.length,
-      rateLimited: Boolean(job.rateLimited),
-      targetMet: job.targetMet
+      rateLimited: Boolean(job.rateLimited)
     };
     if (job.errors.length) {
       discoveryState.lastError = `${job.errors.length} search or website fetch error(s); see the discovery job for details.`;
-      if (!job.targetMet) {
-        discoveryState.lastError += ` Reached ${job.newQualifiedProspects} of ${DAILY_NEW_PROSPECT_TARGET} daily qualified prospects.`;
-      }
       if (job.rateLimited) {
         discoveryState.lastError += " Search provider quota/rate limit reached; configure an authenticated provider for higher-volume daily discovery.";
       }
-    } else if (job.newQualifiedProspects < DAILY_NEW_PROSPECT_TARGET) {
-      discoveryState.lastError = `Discovery found ${job.newQualifiedProspects} new qualified prospects, below the daily target of ${DAILY_NEW_PROSPECT_TARGET}. Search-provider coverage and public-site accessibility limit results.`;
     } else {
       discoveryState.lastError = "";
     }
@@ -937,6 +936,7 @@ async function runDiscoveryJob(job) {
     discoveryState.nextRunAt = getNextDiscoveryRun().toISOString();
     persistState();
   }
+  while (jobs.size > 120) jobs.delete(jobs.keys().next().value);
 }
 
 function getNextDiscoveryRun(now = new Date()) {
@@ -949,19 +949,30 @@ function getNextDiscoveryRun(now = new Date()) {
 }
 
 function scheduleDailyDiscovery() {
-  const nextRun = getNextDiscoveryRun();
+  scheduleDailyDiscoveryAt(getNextDiscoveryRun());
+}
+
+function scheduleDailyDiscoveryAt(nextRun) {
   discoveryState.nextRunAt = nextRun.toISOString();
   persistState();
   const delay = Math.min(nextRun.getTime() - Date.now(), 2147483647);
   setTimeout(async () => {
-    if (!discoveryState.activeJobId) {
+    if (discoveryState.activeJobId || hasActiveCrawlJob()) {
+      scheduleDailyDiscoveryAt(new Date(Date.now() + 60000));
+      return;
+    }
+    try {
+      await runSourceDiscoveryJob("daily_source_discovery");
       const job = createDiscoveryJob("daily_web_discovery");
       jobs.set(job.id, job);
       await runDiscoveryJob(job);
-      await refreshTechnologyDigest();
+      await runScheduledPublicDirectoryRetrieval();
+    } catch (error) {
+      discoveryState.lastError = `Scheduled discovery failed: ${error.message}`;
+      persistState();
+    } finally {
+      scheduleDailyDiscovery();
     }
-    while (jobs.size > 120) jobs.delete(jobs.keys().next().value);
-    scheduleDailyDiscovery();
   }, delay);
 }
 
@@ -990,6 +1001,7 @@ async function fetchPage(url) {
 async function runJob(job) {
   job.status = "running";
   job.startedAt = new Date().toISOString();
+  persistState();
   const visitedDomains = new Set();
 
   for (const sourceId of job.sourceIds) {
@@ -1007,15 +1019,39 @@ async function runJob(job) {
         : await fetchPage(source.url);
 
       const $ = cheerio.load(html);
-      const bankLinks = DEMO_MODE ? [] : extractBankLinks($, source.url);
-      if (bankLinks.length) {
-        job.discoveredCompanies.push(...bankLinks.filter(bank => !visitedDomains.has(normalizeDomain(bank.url))));
-        for (const bank of bankLinks) {
-          const domain = normalizeDomain(bank.url);
-          if (visitedDomains.has(domain)) continue;
+      const directoryCompanies = DEMO_MODE ? [] : extractPublicDirectoryCompanies($, source.url, source);
+      if (directoryCompanies.length) {
+        const newCompanies = directoryCompanies.filter(company => {
+          const domain = normalizeDomain(company.url);
+          if (visitedDomains.has(domain)) return false;
           visitedDomains.add(domain);
-          await crawlCompanySite(job, bank.url, icp, bank.name, source.url, sourceId);
-        }
+          if (job.kind === "daily_public_directory_retrieval" && companies.has(domain)) return false;
+          return true;
+        });
+        job.discoveredCompanies.push(...newCompanies);
+        let nextCompanyIndex = 0;
+        const workerCount = Math.min(DISCOVERY_CRAWL_CONCURRENCY, newCompanies.length);
+        await Promise.all(Array.from({ length: workerCount }, async () => {
+          while (nextCompanyIndex < newCompanies.length) {
+            const company = newCompanies[nextCompanyIndex];
+            nextCompanyIndex += 1;
+            const companyRecord = await crawlCompanySite(
+              job,
+              company.url,
+              icp,
+              company.name,
+              source.url,
+              sourceId
+            );
+            if (job.kind === "daily_public_directory_retrieval" && companyRecord &&
+                !["Priority", "Review"].includes(companyRecord.score.tier)) {
+              companies.delete(normalizeDomain(company.url));
+            } else if (job.kind === "daily_public_directory_retrieval" && companyRecord) {
+              job.qualifiedProspectsAdded += 1;
+            }
+            if (job.companiesVisited > 0 && job.companiesVisited % 5 === 0) persistState();
+          }
+        }));
       } else {
         const domain = normalizeDomain(source.url);
         if (!visitedDomains.has(domain)) {
@@ -1028,9 +1064,252 @@ async function runJob(job) {
     }
   }
 
-  if (job.status === "running") job.status = "completed";
+  if (job.status === "running") {
+    job.status = job.errors.length ? "completed_with_errors" : "completed";
+  }
   job.completedAt = new Date().toISOString();
   persistState();
+}
+
+function ensureScheduledPublicDirectorySources() {
+  const approvedSources = [];
+  let changed = false;
+  for (const catalogEntry of PUBLIC_SOURCE_CATALOG) {
+    let source = [...sources.values()].find(item => item.url === catalogEntry.url);
+    if (!source) {
+      source = {
+        id: id(),
+        name: catalogEntry.name,
+        url: catalogEntry.url,
+        approved: true,
+        domain: normalizeDomain(catalogEntry.url),
+        createdAt: new Date().toISOString()
+      };
+      sources.set(source.id, source);
+      changed = true;
+    }
+    if (source.approved) approvedSources.push(source);
+  }
+  if (changed) persistState();
+  const discoveredDirectorySources = [...sources.values()].filter(source =>
+    source.approved && source.directoryMode === "generic"
+  );
+  return [...new Map(
+    [...approvedSources, ...discoveredDirectorySources].map(source => [source.url, source])
+  ).values()];
+}
+
+async function runScheduledPublicDirectoryRetrieval() {
+  const directorySources = ensureScheduledPublicDirectorySources();
+  if (!directorySources.length) {
+    discoveryState.lastPublicDirectoryRetrievalError =
+      "No built-in public company directories are approved for scheduled retrieval.";
+    persistState();
+    return;
+  }
+
+  let icp = [...icps.values()].find(profile =>
+    profile.industries.includes("BFSI") && profile.locations.includes("India")
+  );
+  if (!icp) {
+    icp = {
+      id: id(),
+      name: "Automated public directory retrieval",
+      industries: ["BFSI"],
+      locations: ["India"],
+      useCases: []
+    };
+    icps.set(icp.id, icp);
+  }
+
+  const job = {
+    id: id(),
+    kind: "daily_public_directory_retrieval",
+    status: "queued",
+    sourceIds: directorySources.map(source => source.id),
+    icpId: icp.id,
+    maxPagesPerCompany: MAX_PAGES_PER_COMPANY,
+    pages: 0,
+    records: 0,
+    companiesVisited: 0,
+    qualifiedProspectsAdded: 0,
+    discoveredCompanies: [],
+    errors: []
+  };
+  jobs.set(job.id, job);
+  discoveryState.lastPublicDirectoryRetrievalError = "";
+  persistState();
+  await runJob(job);
+
+  discoveryState.lastPublicDirectoryRetrievalAt = job.completedAt;
+  discoveryState.lastPublicDirectoryRetrievalSummary = {
+    companiesDiscovered: job.discoveredCompanies.length,
+    companiesVisited: job.companiesVisited,
+    qualifiedProspectsAdded: job.qualifiedProspectsAdded,
+    records: job.records,
+    errors: job.errors.length
+  };
+  discoveryState.lastPublicDirectoryRetrievalError = job.errors.length
+    ? `${job.errors.length} public directory or company-site fetch error(s); see the retrieval job for details.`
+    : "";
+  persistState();
+}
+
+function sourceDiscoveryQueries() {
+  const profile = [...icps.values()].find(item =>
+    item.industries.length || item.locations.length
+  );
+  const dayNumber = Math.floor(Date.now() / 86400000);
+  const industries = profile?.industries.length ? profile.industries : DISCOVERY_INDUSTRIES;
+  const locations = profile?.locations.length ? profile.locations : ["India"];
+  const industry = industries[dayNumber % industries.length];
+  const location = locations[dayNumber % locations.length];
+  const template = SOURCE_DISCOVERY_QUERY_TEMPLATES[
+    dayNumber % SOURCE_DISCOVERY_QUERY_TEMPLATES.length
+  ];
+  return [template.replace("{industry}", industry).replace("{location}", location)];
+}
+
+function sourceCandidateKey(url) {
+  const parsed = new URL(url);
+  parsed.hash = "";
+  parsed.search = "";
+  parsed.pathname = parsed.pathname.replace(/\/+$/, "") || "/";
+  return parsed.href.toLowerCase();
+}
+
+function hasTrustedDirectoryHost(url) {
+  const hostname = new URL(url).hostname.toLowerCase();
+  return /\.gov(?:\.[a-z]{2,})?$/.test(hostname) ||
+    /\.gov\.[a-z]{2,}$/.test(hostname) ||
+    /\.edu(?:\.[a-z]{2,})?$/.test(hostname) ||
+    /\.edu\.[a-z]{2,}$/.test(hostname);
+}
+
+function isDirectorySearchResult(result) {
+  const evidence = `${result.title} ${result.description}`.toLowerCase();
+  const hasDirectorySignal = /\b(directory|directories|member list|members list|company list|list of companies|registered entities|licensed entities|registry|register of|association members|industry members)\b/.test(evidence);
+  const hasAuthoritySignal = hasTrustedDirectoryHost(result.url) ||
+    /\b(regulator|government|official|association|chamber of commerce|federation|council|industry body)\b/.test(evidence);
+  return hasDirectorySignal && hasAuthoritySignal;
+}
+
+async function validateSourceCandidate(result, searchQuery) {
+  const key = sourceCandidateKey(result.url);
+  const prior = [...sourceCandidates.values()].find(candidate =>
+    sourceCandidateKey(candidate.url) === key
+  );
+  if (prior) {
+    prior.lastSeenAt = new Date().toISOString();
+    prior.searchEvidence = {
+      title: result.title,
+      description: result.description,
+      query: searchQuery
+    };
+    return prior;
+  }
+
+  const html = await fetchPage(result.url);
+  const page = extractPageText(html);
+  const listedCompanies = extractGenericDirectoryCompanies(page.$, result.url);
+  const directoryText = `${result.title} ${result.description} ${page.title} ${page.text}`;
+  const hasDirectorySignal = /\b(directory|directories|member list|members|companies|company list|registered|licensed|registry|register|portfolio|bank links|insurers|financial institutions)\b/i.test(directoryText);
+  const trustedHost = hasTrustedDirectoryHost(result.url) ||
+    /\b(official website|official directory|regulator|regulatory authority|government authority)\b/i.test(directoryText);
+  const associationSignal = /\b(association|chamber of commerce|federation|council|industry body|members)\b/i.test(directoryText);
+  if (listedCompanies.length < 2 || !hasDirectorySignal || (!trustedHost && !associationSignal)) {
+    return null;
+  }
+
+  const confidence = Math.min(99, 45 +
+    (trustedHost ? 25 : 10) +
+    (associationSignal ? 10 : 0) +
+    Math.min(listedCompanies.length, 10) * 2
+  );
+  const candidate = {
+    id: id(),
+    name: result.title || page.title || new URL(result.url).hostname,
+    url: result.url,
+    domain: normalizeDomain(result.url),
+    authorityDomain: new URL(result.url).hostname,
+    description: result.description || "",
+    evidence: page.text.slice(0, 500),
+    searchQuery,
+    listedCompanyLinks: listedCompanies.length,
+    confidence,
+    status: "pending",
+    discoveredAt: new Date().toISOString(),
+    lastSeenAt: new Date().toISOString()
+  };
+  sourceCandidates.set(candidate.id, candidate);
+  return candidate;
+}
+
+async function runSourceDiscoveryJob(kind = "daily_source_discovery") {
+  if (hasActiveCrawlJob()) return null;
+  const queries = sourceDiscoveryQueries();
+  const job = {
+    id: id(),
+    kind,
+    status: "queued",
+    searchQueries: queries,
+    searchesCompleted: 0,
+    candidatesChecked: 0,
+    candidatesDiscovered: 0,
+    errors: [],
+    startedAt: new Date().toISOString()
+  };
+  jobs.set(job.id, job);
+  discoveryState.activeSourceDiscoveryJobId = job.id;
+  persistState();
+
+  try {
+    job.status = "running";
+    for (const query of queries) {
+      try {
+        await waitForSearchRateLimit();
+        const results = await searchWeb(query);
+        for (const result of results) {
+          if (job.candidatesChecked >= MAX_SOURCE_CANDIDATES_TO_VALIDATE) break;
+          if (!isDirectorySearchResult(result)) continue;
+          job.candidatesChecked += 1;
+          try {
+            const candidate = await validateSourceCandidate(result, query);
+            if (candidate && candidate.status === "pending") {
+              job.candidatesDiscovered += 1;
+            }
+          } catch (error) {
+            job.errors.push({ url: result.url, reason: error.message });
+          }
+        }
+      } catch (error) {
+        job.errors.push({ query, reason: error.message });
+        if (/HTTP 429\b/.test(error.message)) break;
+      }
+      job.searchesCompleted += 1;
+      persistState();
+    }
+    job.status = job.errors.length ? "completed_with_errors" : "completed";
+  } catch (error) {
+    job.status = "failed";
+    job.error = error.message;
+  } finally {
+    job.completedAt = new Date().toISOString();
+    discoveryState.activeSourceDiscoveryJobId = null;
+    discoveryState.lastSourceDiscoveryAt = job.completedAt;
+    discoveryState.lastSourceDiscoverySummary = {
+      searchesCompleted: job.searchesCompleted,
+      candidatesChecked: job.candidatesChecked,
+      candidatesDiscovered: job.candidatesDiscovered,
+      errors: job.errors.length
+    };
+    discoveryState.lastSourceDiscoveryError = job.errors.length
+      ? `${job.errors.length} source discovery search or validation error(s); see the source-discovery job for details.`
+      : "";
+    persistState();
+  }
+  while (jobs.size > 120) jobs.delete(jobs.keys().next().value);
+  return job;
 }
 
 async function crawlCompanySite(job, homeUrl, icp, companyName, directoryUrl, sourceId, homeHtml, discoveryEvidence = [], liveCrawl = !DEMO_MODE) {
@@ -1055,7 +1334,8 @@ async function crawlCompanySite(job, homeUrl, icp, companyName, directoryUrl, so
       }
     }
 
-    const companyRecord = saveCompany(pages, homeUrl, icp, companyName, directoryUrl);
+    const verifiedCompanyName = companyName || companyNameFromWebsite(homepage, homeUrl);
+    const companyRecord = saveCompany(pages, homeUrl, icp, verifiedCompanyName, directoryUrl);
     job.records += 1;
     job.companiesVisited += 1;
     return companyRecord;
@@ -1165,6 +1445,13 @@ app.get("/api/config", (req, res) => res.json({
 
 app.get("/api/discovery/status", (req, res) => {
   const activeJob = discoveryState.activeJobId ? jobs.get(discoveryState.activeJobId) : null;
+  const activeSourceDiscovery = discoveryState.activeSourceDiscoveryJobId
+    ? jobs.get(discoveryState.activeSourceDiscoveryJobId)
+    : null;
+  const activePublicDirectoryRetrieval = [...jobs.values()].find(job =>
+    job.kind === "daily_public_directory_retrieval" &&
+    ["running", "queued"].includes(job.status)
+  );
   res.json({
     provider: WEB_SEARCH_PROVIDER,
     apiKeyRequired: false,
@@ -1176,33 +1463,62 @@ app.get("/api/discovery/status", (req, res) => {
     lastRunAt: discoveryState.lastRunAt,
     lastRunSummary: discoveryState.lastRunSummary,
     lastError: discoveryState.lastError,
+    publicDirectoryRetrievalEnabled: true,
+    publicDirectorySources: PUBLIC_SOURCE_CATALOG.map(source => ({
+      id: source.id,
+      name: source.name,
+      approved: [...sources.values()].some(item => item.url === source.url && item.approved)
+    })),
+    lastPublicDirectoryRetrievalAt: discoveryState.lastPublicDirectoryRetrievalAt,
+    lastPublicDirectoryRetrievalSummary: discoveryState.lastPublicDirectoryRetrievalSummary,
+    lastPublicDirectoryRetrievalError: discoveryState.lastPublicDirectoryRetrievalError,
+    sourceDiscoveryEnabled: true,
+    activeSourceDiscovery: activeSourceDiscovery ? {
+      id: activeSourceDiscovery.id,
+      status: activeSourceDiscovery.status,
+      searchesCompleted: activeSourceDiscovery.searchesCompleted,
+      totalSearchQueries: activeSourceDiscovery.searchQueries.length,
+      candidatesChecked: activeSourceDiscovery.candidatesChecked,
+      candidatesDiscovered: activeSourceDiscovery.candidatesDiscovered,
+      errors: activeSourceDiscovery.errors.length
+    } : null,
+    lastSourceDiscoveryAt: discoveryState.lastSourceDiscoveryAt,
+    lastSourceDiscoverySummary: discoveryState.lastSourceDiscoverySummary,
+    lastSourceDiscoveryError: discoveryState.lastSourceDiscoveryError,
+    pendingSourceCandidates: [...sourceCandidates.values()].filter(candidate =>
+      candidate.status === "pending"
+    ).length,
+    activePublicDirectoryRetrieval: activePublicDirectoryRetrieval ? {
+      id: activePublicDirectoryRetrieval.id,
+      status: activePublicDirectoryRetrieval.status,
+      companiesDiscovered: activePublicDirectoryRetrieval.discoveredCompanies.length,
+      companiesVisited: activePublicDirectoryRetrieval.companiesVisited,
+      pages: activePublicDirectoryRetrieval.pages,
+      errors: activePublicDirectoryRetrieval.errors.length
+    } : null,
     activeJob: activeJob ? {
       id: activeJob.id,
       status: activeJob.status,
       searchesCompleted: activeJob.searchesCompleted,
+      totalSearchQueries: activeJob.totalSearchQueries || DISCOVERY_QUERIES.length,
       companiesVisited: activeJob.companiesVisited,
       companiesDiscovered: activeJob.discoveredCompanies.length,
-      newQualifiedProspects: activeJob.newQualifiedProspects || 0,
+      qualifiedProspectsAdded: activeJob.qualifiedProspectsAdded || 0,
       newHighPotentialProspects: activeJob.newHighPotentialProspects || 0,
-      dailyProspectTarget: DAILY_NEW_PROSPECT_TARGET,
       rateLimited: Boolean(activeJob.rateLimited),
-      targetMet: Boolean(activeJob.targetMet),
       pages: activeJob.pages,
       errors: activeJob.errors.length
     } : null,
-    technologyRefreshInProgress: technologyState.refreshing,
-    dailySearchQueries: DISCOVERY_QUERIES.length,
     resultsPerQuery: MAX_RESULTS_PER_SEARCH,
-    dailyProspectTarget: DAILY_NEW_PROSPECT_TARGET,
-    maxCompanySitesPerRun: MAX_DAILY_DISCOVERY_COMPANIES,
+    dailySearchQueries: DISCOVERY_QUERIES.length,
     maxPagesPerCompany: MAX_PAGES_PER_COMPANY,
     crawlConcurrency: DISCOVERY_CRAWL_CONCURRENCY
   });
 });
 
 app.post("/api/discovery/run-now", (req, res) => {
-  if (discoveryState.activeJobId || technologyState.refreshing) {
-    return res.status(409).json({ error: "Another discovery or technology-news search is already running." });
+  if (discoveryState.activeJobId || hasActiveCrawlJob()) {
+    return res.status(409).json({ error: "A discovery or company crawl is already running." });
   }
 
   const job = createDiscoveryJob("manual_web_discovery");
@@ -1213,31 +1529,56 @@ app.post("/api/discovery/run-now", (req, res) => {
   res.status(202).json({ id: job.id, status: job.status });
 });
 
-app.get("/api/technology-updates", (req, res) => {
-  res.json({
-    provider: WEB_SEARCH_PROVIDER,
-    items: technologyState.items,
-    lastUpdatedAt: technologyState.lastUpdatedAt,
-    lastError: technologyState.lastError,
-    refreshing: technologyState.refreshing,
-    searchesCompleted: technologyState.searchesCompleted || 0,
-    totalSearches: TECH_UPDATE_QUERIES.length,
-    schedule: `${DISCOVERY_TIME} ${DISCOVERY_TIME_ZONE}`
-  });
+app.post("/api/source-discovery/run-now", (req, res) => {
+  if (hasActiveCrawlJob() || discoveryState.activeSourceDiscoveryJobId) {
+    return res.status(409).json({ error: "A discovery or company crawl is already running." });
+  }
+  const run = runSourceDiscoveryJob("manual_source_discovery");
+  const job = jobs.get(discoveryState.activeSourceDiscoveryJobId);
+  res.status(202).json({ id: job.id, status: job.status });
+  void run;
 });
 
-app.post("/api/technology-updates/refresh", (req, res) => {
-  if (discoveryState.activeJobId || technologyState.refreshing) {
-    return res.status(409).json({ error: "Another discovery or technology-news search is already running." });
-  }
+app.get("/api/source-candidates", (req, res) => {
+  res.json([...sourceCandidates.values()].sort((a, b) =>
+    b.confidence - a.confidence || b.lastSeenAt.localeCompare(a.lastSeenAt)
+  ));
+});
 
-  refreshTechnologyDigest().catch(error => {
-    technologyState.refreshing = false;
-    technologyState.lastError = `Technology digest failed: ${error.message}`;
-    console.error(technologyState.lastError);
-    persistState();
-  });
-  res.status(202).json({ status: "refreshing" });
+app.post("/api/source-candidates/:candidateId/approve", (req, res) => {
+  const candidate = sourceCandidates.get(req.params.candidateId);
+  if (!candidate) return res.status(404).json({ error: "Source candidate not found." });
+  if (candidate.status === "rejected") {
+    return res.status(409).json({ error: "This source candidate was dismissed." });
+  }
+  const existing = [...sources.values()].find(source => source.url === candidate.url);
+  const source = existing || {
+    id: id(),
+    name: candidate.name,
+    url: candidate.url,
+    approved: true,
+    domain: candidate.domain,
+    directoryMode: "generic",
+    sourceCandidateId: candidate.id,
+    createdAt: new Date().toISOString()
+  };
+  source.approved = true;
+  source.directoryMode = "generic";
+  source.sourceCandidateId = candidate.id;
+  sources.set(source.id, source);
+  candidate.status = "approved";
+  candidate.approvedAt = new Date().toISOString();
+  persistState();
+  res.json({ candidate, source });
+});
+
+app.post("/api/source-candidates/:candidateId/dismiss", (req, res) => {
+  const candidate = sourceCandidates.get(req.params.candidateId);
+  if (!candidate) return res.status(404).json({ error: "Source candidate not found." });
+  candidate.status = "rejected";
+  candidate.dismissedAt = new Date().toISOString();
+  persistState();
+  res.json({ candidate });
 });
 
 app.get("/api/google/status", (req, res) => {
@@ -1392,6 +1733,42 @@ app.post("/api/icps", (req, res) => {
 /* Sources */
 app.get("/api/sources", (req, res) => res.json([...sources.values()]));
 
+app.get("/api/public-sources", (req, res) => {
+  const builtInSources = PUBLIC_SOURCE_CATALOG.map(source => ({
+    ...source,
+    added: [...sources.values()].some(item => item.url === source.url)
+  }));
+  const discoveredSources = [...sources.values()]
+    .filter(source => source.directoryMode === "generic")
+    .map(source => ({
+      id: source.sourceCandidateId,
+      name: source.name,
+      url: source.url,
+      description: "Discovered directory; approved for company-list retrieval.",
+      added: true
+    }));
+  res.json([...builtInSources, ...discoveredSources]);
+});
+
+app.post("/api/public-sources/:sourceId", (req, res) => {
+  const source = PUBLIC_SOURCE_CATALOG.find(item => item.id === req.params.sourceId);
+  if (!source) return res.status(404).json({ error: "Public data source not found." });
+  const existing = [...sources.values()].find(item => item.url === source.url);
+  if (existing) return res.json({ ...existing, alreadyAdded: true });
+
+  const item = {
+    id: id(),
+    name: source.name,
+    url: source.url,
+    approved: true,
+    domain: normalizeDomain(source.url),
+    createdAt: new Date().toISOString()
+  };
+  sources.set(item.id, item);
+  persistState();
+  res.status(201).json(item);
+});
+
 app.post("/api/sources", (req, res) => {
   const parsed = SOURCE.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
@@ -1409,6 +1786,10 @@ app.post("/api/sources", (req, res) => {
 
 /* Crawl job */
 app.post("/api/jobs", (req, res) => {
+  if (discoveryState.activeJobId || hasActiveCrawlJob()) {
+    return res.status(409).json({ error: "A discovery or company crawl is already running." });
+  }
+
   const schema = z.object({
     sourceIds: z.array(z.string()).min(1),
     maxPagesPerCompany: z.number().int().positive().max(10).default(MAX_PAGES_PER_COMPANY),

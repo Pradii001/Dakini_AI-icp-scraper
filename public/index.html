@@ -8,57 +8,45 @@
 </head>
 <body>
   <header class="topbar">
-    <a class="brand" href="/">Dakini AI <span>ICP Scraper</span></a>
+    <a class="brand" href="/" aria-label="Dakini AI ICP Scraper home"><span class="brand-mark">D</span><span class="brand-name">Dakini AI <span>ICP Scraper</span></span></a>
     <nav aria-label="Main navigation">
-      <a href="#prospects">Prospects</a>
-      <a href="#techUpdates">Tech brief</a>
-      <a id="setupNav" href="#setup">ICP &amp; sources</a>
+      <a class="active" href="#prospects">Prospects</a>
+      <a id="setupNav" href="#setup">Configuration</a>
     </nav>
   </header>
   <main class="container">
     <section class="hero">
       <div>
-        <p class="eyebrow">SALES PROSPECTING</p>
+        <p class="eyebrow">INTELLIGENT PROSPECTING</p>
         <h1>Find your next voice-agent customer</h1>
-        <p class="muted">Discover companies that could benefit from Dakini AI, see why they fit, and find their public business contacts.</p>
+        <p class="muted">Discover businesses where Dakini AI can make a measurable difference. Review evidence, prioritize fit, and connect with public business contacts.</p>
       </div>
       <p id="modeNotice" class="mode-notice"></p>
     </section>
 
     <section class="discovery-banner">
-      <div>
-        <p class="eyebrow">DAILY INTERNET DISCOVERY</p>
-        <h2>Daily goal: 100 new qualified prospects</h2>
-        <p id="discoveryStatus" class="muted">Checking search setup…</p>
+      <div class="discovery-copy">
+        <p class="eyebrow">AUTOMATED DISCOVERY</p>
+        <h2>Find new opportunities, every day</h2>
+        <p class="muted">No daily lead quota or per-run company cap. Results depend on search coverage, provider quotas, and evidence of genuine customer fit.</p>
+        <p id="discoveryStatus" class="discovery-status" role="status" aria-live="polite">Checking search setup…</p>
       </div>
-      <button id="runDiscoveryBtn" type="button" disabled>Run discovery now</button>
-    </section>
-
-    <section id="techUpdates" class="card tech-card">
-      <div class="section-heading">
-        <div>
-          <p class="eyebrow">DAILY RELEASE RADAR</p>
-          <h2>AI Tech Scout</h2>
-        </div>
-        <button id="refreshTechBtn" type="button">Refresh tech brief</button>
-      </div>
-      <p class="muted">A daily, source-linked roundup of reported AI, voice, automation, and other technology releases. Headlines and summaries come from news search; open the publisher link to verify details.</p>
-      <p id="techUpdatesStatus" class="status-note" role="status">Loading the latest technology brief…</p>
-      <div id="techUpdatesList" class="tech-updates-list"></div>
+      <button id="runDiscoveryBtn" class="primary-action" type="button" disabled><span aria-hidden="true">↻</span> Run discovery</button>
     </section>
 
     <section id="prospects" class="card results-card">
       <div class="section-heading">
         <div>
-          <p class="eyebrow">YOUR LEAD LIST</p>
-          <h2>Potential Dakini AI clients</h2>
+          <p class="eyebrow">PROSPECT PORTFOLIO</p>
+          <h2>Potential clients</h2>
+          <p class="muted section-subtitle">Ranked by evidence of operational fit and Dakini AI relevance.</p>
         </div>
         <div class="export-actions">
-          <button id="googleSheetsBtn" class="google-button" type="button" disabled>Connect Google Sheets</button>
+          <button id="googleSheetsBtn" class="google-button" type="button" disabled>Connect to Google Sheets</button>
           <span id="googleStatus" class="muted" role="status"></span>
         </div>
       </div>
-      <p class="muted">Fit scores help prioritize research. They do not confirm purchase intent. Contact details are public company channels and may not identify a decision-maker.</p>
+      <p class="results-disclaimer">Scores help prioritize research; they do not confirm purchase intent. Contacts are public company channels and may not identify a decision-maker.</p>
       <details class="score-guide">
         <summary>How is the potential-client score measured?</summary>
         <p class="muted">The score reflects evidence that Dakini AI's published customer-service, sales, and knowledge agents could help this company through multilingual support, customer-context lookup, human escalation, and system integrations. AI/voice/contact-center solution vendors are penalized as competitors. <a href="https://www.dakini-ai.com/" target="_blank" rel="noopener noreferrer">View Dakini AI's public capabilities</a>. This is a prospecting heuristic, not a purchase probability.</p>
@@ -78,7 +66,8 @@
         </div>
         <p class="muted"><strong>High potential:</strong> score ≥70, configured ICP criteria match, a Dakini-aligned workflow is detected, and an explicit buying/automation signal is present. <strong>Research:</strong> score ≥45, ICP criteria match, and at least one aligned workflow is detected. ICP industry, use-case, and location settings gate the tier but do not add score points. Workflow opportunities inferred from adjacent use cases should be validated with the prospect.</p>
       </details>
-      <p id="googleSetupHelp" class="google-help"></p>
+      <p id="googleSetupHelp" class="google-help" role="status"></p>
+      <div class="metrics-heading"><span class="eyebrow">PORTFOLIO OVERVIEW</span><span class="muted">Updated from current prospect records</span></div>
       <div id="dashboard" class="stats"></div>
       <div class="lead-controls">
         <label class="search-label">Search companies
@@ -131,20 +120,51 @@
           <h2>Define your ICP</h2>
           <p class="muted">Optional for daily discovery. The automatic search targets voice-agent fit across all industries.</p>
           <form id="icpForm">
-            <input id="icpName" placeholder="ICP name" value="AI Voice Agent - BFSI">
-            <input id="industries" placeholder="Industries" value="BFSI">
-            <input id="locations" placeholder="Locations" value="India">
-            <input id="useCases" placeholder="Use cases" value="Collections, Customer Support">
+            <label class="form-field">Profile name
+              <input id="icpName" placeholder="ICP name" value="AI Voice Agent - BFSI">
+            </label>
+            <label class="form-field">Target industries
+              <input id="industries" placeholder="e.g. BFSI, healthcare" value="BFSI">
+            </label>
+            <label class="form-field">Target locations
+              <input id="locations" placeholder="e.g. India, Tamil Nadu" value="India">
+            </label>
+            <label class="form-field">Relevant workflows
+              <input id="useCases" placeholder="e.g. collections, customer support" value="Collections, Customer Support">
+            </label>
             <button>Create ICP</button>
           </form>
           <pre id="icpResult"></pre>
         </section>
         <section class="setup-panel">
+          <h2>Discover new public data sources</h2>
+          <p class="muted">Search the web for regulator registries, member directories, and company lists matched to your ICP. Discovered sources are checked for linked company websites and wait for your approval before crawling.</p>
+          <ol class="source-architecture" aria-label="Automatic source discovery stages">
+            <li><strong>Find</strong><span>Search for official registries and member lists</span></li>
+            <li><strong>Validate</strong><span>Check authority signals and company links</span></li>
+            <li><strong>Approve</strong><span>Review each source before trusting it</span></li>
+            <li><strong>Retrieve</strong><span>Crawl new companies and rank their fit</span></li>
+          </ol>
+          <button id="findSourcesBtn" class="secondary-button" type="button">Find data sources</button>
+          <p id="sourceDiscoveryStatus" class="status-note" role="status" aria-live="polite"></p>
+          <div id="sourceCandidateList" class="public-source-list" aria-live="polite"></div>
+        </section>
+        <section class="setup-panel">
+          <h2>Official company directories</h2>
+          <p class="muted">Add verified public directories as approved sources. Their listed companies are crawled from the linked company websites.</p>
+          <div id="publicSourceList" class="public-source-list" aria-live="polite"></div>
+          <pre id="publicSourceResult"></pre>
+        </section>
+        <section class="setup-panel">
           <h2>Add an approved source</h2>
           <p class="muted">Add a company website or a public directory containing company links.</p>
           <form id="sourceForm">
-            <input id="sourceName" placeholder="Source name" value="Company Directory">
-            <input id="sourceUrl" type="url" placeholder="https://example.com" value="https://rbi.org.in/scripts/banklinks.aspx">
+            <label class="form-field">Source name
+              <input id="sourceName" placeholder="e.g. Company Directory" value="Company Directory">
+            </label>
+            <label class="form-field">Public website or directory URL
+              <input id="sourceUrl" type="url" placeholder="https://example.com" value="https://rbi.org.in/scripts/banklinks.aspx">
+            </label>
             <label class="checkbox-label"><input id="approved" type="checkbox" checked> Approved</label>
             <button>Add Source</button>
           </form>
