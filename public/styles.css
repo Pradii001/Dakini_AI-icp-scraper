@@ -37,6 +37,23 @@ a { color: #175cd3; }
 .discovery-banner h2 { margin: 0 0 5px; }
 .discovery-banner .muted { margin: 0; }
 .discovery-banner button { flex: none; }
+.engine-header-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+.engine-status-pill-badge { display: inline-flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 999px; background: #dcfae6; color: #05603a; font-size: 11px; font-weight: 800; }
+.engine-status-pill-badge.paused { background: #f2f4f7; color: #475467; }
+.engine-pulse-dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+.engine-controls-row { display: flex; align-items: end; gap: 12px; margin-top: 16px; }
+.engine-mode-select-label { display: grid; flex: 1; gap: 5px; color: #344054; font-size: 12px; font-weight: 700; }
+.engine-action-buttons { display: flex; gap: 8px; }
+.engine-metrics-bar { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
+.engine-metric-chip { display: grid; gap: 3px; min-width: 110px; padding: 9px 11px; border: 1px solid #d0d5dd; border-radius: 8px; background: rgba(255, 255, 255, .7); }
+.engine-metric-chip strong { font-size: 13px; }
+.engine-metric-wide { flex: 1; }
+.engine-terminal-card { overflow: hidden; }
+.terminal-summary { display: flex; align-items: center; justify-content: space-between; gap: 14px; cursor: pointer; }
+.terminal-summary-left { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.terminal-badge { color: #475467; font-size: 11px; font-weight: 800; }
+.engine-terminal-console { max-height: 260px; overflow: auto; margin-top: 14px; padding: 12px; border-radius: 8px; background: #101828; color: #d0d5dd; font: 12px/1.6 Consolas, monospace; }
+.terminal-line { padding: 2px 0; overflow-wrap: anywhere; }
 .status-note { padding: 10px 12px; border-radius: 8px; background: #f9fafb; color: #475467; font-size: 13px; line-height: 1.5; }
 .card { margin: 18px 0; padding: 22px; border: 1px solid #eaecf0; border-radius: 14px; background: white; box-shadow: 0 4px 16px rgba(16, 24, 40, .04); }
 .results-card { scroll-margin-top: 82px; }
@@ -131,6 +148,8 @@ pre { max-height: 180px; overflow: auto; white-space: pre-wrap; overflow-wrap: a
   .hero { display: block; }
   .mode-notice { display: inline-block; margin-top: 15px; }
   .discovery-banner { align-items: flex-start; flex-direction: column; }
+  .engine-controls-row { align-items: stretch; flex-direction: column; }
+  .engine-action-buttons { flex-wrap: wrap; }
   .section-heading { align-items: flex-start; flex-direction: column; }
   .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .setup-grid { grid-template-columns: 1fr; }
@@ -276,6 +295,19 @@ td a { color: #176b65; }
 .form-field { display: grid; gap: 6px; color: #40556e; font-size: 12px; font-weight: 700; }
 .form-field input { font-weight: 400; }
 .public-source-list { display: grid; gap: 10px; }
+.location-picker { min-width: 0; margin: 0; padding: 12px; border: 1px solid var(--line); border-radius: 8px; }
+.location-picker legend { padding: 0 5px; color: #40556e; font-size: 12px; font-weight: 700; }
+.location-picker > small { display: block; margin-bottom: 9px; }
+.location-button-grid { display: flex; flex-wrap: wrap; gap: 7px; max-height: 180px; overflow-y: auto; padding: 2px; }
+button.location-button { min-height: 32px; padding: 6px 10px; border: 1px solid #d0d5dd; border-radius: 999px; background: #fff; color: #344054; font-size: 12px; font-weight: 600; }
+button.location-button:hover { background: #f2f4f7; }
+button.location-button.selected { border-color: var(--accent); background: #e8f4f2; color: #0d554e; }
+.selected-locations { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 9px; }
+.selected-location-chip { display: inline-flex; align-items: center; gap: 5px; padding: 4px 8px; border-radius: 999px; background: #e8f4f2; color: #0d554e; font-size: 12px; }
+button.remove-location-button { min-height: 20px; padding: 0 2px; background: transparent; color: inherit; font-size: 16px; line-height: 1; }
+button.remove-location-button:hover { background: transparent; color: #b42318; }
+.add-area-control { display: flex; gap: 8px; margin-top: 10px; }
+.add-area-control .secondary-button { flex: none; }
 .public-source-item { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px; border: 1px solid #e5eaf0; border-radius: 8px; background: #f9fbfc; }
 .public-source-item .public-source-name, .public-source-item span { display: block; }
 .public-source-item .public-source-name { margin-bottom: 3px; color: #304762; font-size: 13px; font-weight: 700; text-decoration: none; }

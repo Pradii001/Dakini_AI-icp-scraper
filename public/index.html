@@ -1,184 +1,230 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Dakini AI ICP Scraper</title>
-  <link rel="stylesheet" href="/styles.css">
+  <title>Dakini AI | Turn scattered knowledge into action</title>
+  <meta name="description" content="Dakini AI helps teams turn fragmented information into intelligence, workflows, and faster decisions.">
+  <link rel="stylesheet" href="/landing.css">
 </head>
 <body>
   <header class="topbar">
-    <a class="brand" href="/" aria-label="Dakini AI ICP Scraper home"><span class="brand-mark">D</span><span class="brand-name">Dakini AI <span>ICP Scraper</span></span></a>
-    <nav aria-label="Main navigation">
-      <a class="active" href="#prospects">Prospects</a>
-      <a id="setupNav" href="#setup">Configuration</a>
-    </nav>
+    <div class="container nav-wrap">
+      <a class="brand" href="/" aria-label="Dakini AI home">
+        <span class="brand-mark">D</span>
+        <span class="brand-name">Dakini AI</span>
+      </a>
+      <nav class="main-nav" aria-label="Main navigation">
+        <a href="#product">Product</a>
+        <a href="#solutions">Solutions</a>
+        <a href="#workflow">Workflow</a>
+        <a href="#pricing">Pricing</a>
+      </nav>
+      <div class="nav-actions">
+        <a class="nav-link" href="#demo">Book demo</a>
+        <a class="button button-primary" href="/platform.html">Launch platform</a>
+      </div>
+    </div>
   </header>
-  <main class="container">
+
+  <main>
     <section class="hero">
-      <div>
-        <p class="eyebrow">INTELLIGENT PROSPECTING</p>
-        <h1>Find your next voice-agent customer</h1>
-        <p class="muted">Discover businesses where Dakini AI can make a measurable difference. Review evidence, prioritize fit, and connect with public business contacts.</p>
+      <div class="container hero-layout">
+        <div class="hero-copy">
+          <p class="eyebrow">AI FOR KNOWLEDGE-HEAVY WORK</p>
+          <h1>Turn scattered knowledge into smarter action.</h1>
+          <p class="lead">Dakini AI helps teams find the right information, understand context, and move from insight to execution without manual overhead.</p>
+          <div class="cta-row">
+            <a class="button button-primary" href="/platform.html">Launch platform</a>
+            <a class="button button-secondary" href="#demo">Book demo</a>
+          </div>
+          <ul class="trust-list" aria-label="Key product benefits">
+            <li>Unified search across documents, tickets, and workflows</li>
+            <li>Source-backed answers with clear context</li>
+            <li>Actionable next steps for sales, support, and operations</li>
+          </ul>
+        </div>
+
+        <div class="hero-panel" aria-label="Dakini AI platform preview">
+          <div class="panel-card panel-card-top">
+            <div class="panel-header">
+              <span class="dot green"></span>
+              <span class="dot amber"></span>
+              <span class="dot red"></span>
+            </div>
+            <div class="panel-body">
+              <div class="mini-tag">Customer intelligence</div>
+              <h2>“Which accounts need a follow-up this week?”</h2>
+              <div class="result-box">
+                <span class="pill success">3 accounts flagged</span>
+                <p>High churn risk, recent demo interest, and missing follow-up notes identified automatically.</p>
+              </div>
+            </div>
+          </div>
+          <div class="mini-grid">
+            <div class="mini-stat">
+              <strong>4.2x</strong>
+              <span>faster research</span>
+            </div>
+            <div class="mini-stat">
+              <strong>72%</strong>
+              <span>less manual triage</span>
+            </div>
+          </div>
+        </div>
       </div>
-      <p id="modeNotice" class="mode-notice"></p>
     </section>
 
-    <section class="discovery-banner">
-      <div class="discovery-copy">
-        <p class="eyebrow">AUTOMATED DISCOVERY</p>
-        <h2>Find new opportunities, every day</h2>
-        <p class="muted">No daily lead quota or per-run company cap. Results depend on search coverage, provider quotas, and evidence of genuine customer fit.</p>
-        <p id="discoveryStatus" class="discovery-status" role="status" aria-live="polite">Checking search setup…</p>
+    <section class="logo-strip">
+      <div class="container logo-inner">
+        <span>Sales</span>
+        <span>Support</span>
+        <span>Operations</span>
+        <span>Knowledge teams</span>
+        <span>Customer success</span>
       </div>
-      <button id="runDiscoveryBtn" class="primary-action" type="button" disabled><span aria-hidden="true">↻</span> Run discovery</button>
     </section>
 
-    <section id="prospects" class="card results-card">
-      <div class="section-heading">
+    <section id="product" class="section">
+      <div class="container">
+        <div class="section-heading">
+          <p class="eyebrow">THE PRODUCT</p>
+          <h2>An AI layer for the way teams actually work.</h2>
+        </div>
+        <div class="card-grid three-up">
+          <article class="info-card">
+            <div class="icon">01</div>
+            <h3>Unified knowledge search</h3>
+            <p>Ask plain-language questions across the files, docs, tickets, and records your team already uses.</p>
+          </article>
+          <article class="info-card">
+            <div class="icon">02</div>
+            <h3>Document intelligence</h3>
+            <p>Summarize proposals, notes, PDFs, policies, and meeting transcripts into actionable insight.</p>
+          </article>
+          <article class="info-card">
+            <div class="icon">03</div>
+            <h3>Workflow copilot</h3>
+            <p>Turn context into next steps—follow-ups, escalations, team tasks, and recommended actions.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section id="solutions" class="section alt-section">
+      <div class="container split-layout">
         <div>
-          <p class="eyebrow">PROSPECT PORTFOLIO</p>
-          <h2>Potential clients</h2>
-          <p class="muted section-subtitle">Ranked by evidence of operational fit and Dakini AI relevance.</p>
+          <p class="eyebrow">WHY IT MATTERS</p>
+          <h2>Most teams do not lack information. They lack clarity.</h2>
+          <p class="lead small">Information is fragmented across systems, conversations, and documents. Dakini AI brings it together so people spend less time searching and more time acting.</p>
         </div>
-        <div class="export-actions">
-          <button id="googleSheetsBtn" class="google-button" type="button" disabled>Connect to Google Sheets</button>
-          <span id="googleStatus" class="muted" role="status"></span>
+        <div class="check-list">
+          <div class="check-item">
+            <span class="check">✓</span>
+            <div>
+              <h3>Search without context switching</h3>
+              <p>Find answers from internal knowledge with one natural-language workflow.</p>
+            </div>
+          </div>
+          <div class="check-item">
+            <span class="check">✓</span>
+            <div>
+              <h3>Reduce repetitive work</h3>
+              <p>Summaries, action items, and AI-generated next steps speed up execution.</p>
+            </div>
+          </div>
+          <div class="check-item">
+            <span class="check">✓</span>
+            <div>
+              <h3>Improve decision quality</h3>
+              <p>Teams work with better context, fewer blind spots, and evidence-backed outputs.</p>
+            </div>
+          </div>
         </div>
-      </div>
-      <p class="results-disclaimer">Scores help prioritize research; they do not confirm purchase intent. Contacts are public company channels and may not identify a decision-maker.</p>
-      <details class="score-guide">
-        <summary>How is the potential-client score measured?</summary>
-        <p class="muted">The score reflects evidence that Dakini AI's published customer-service, sales, and knowledge agents could help this company through multilingual support, customer-context lookup, human escalation, and system integrations. AI/voice/contact-center solution vendors are penalized as competitors. <a href="https://www.dakini-ai.com/" target="_blank" rel="noopener noreferrer">View Dakini AI's public capabilities</a>. This is a prospecting heuristic, not a purchase probability.</p>
-        <div class="table-wrap">
-          <table>
-            <thead><tr><th scope="col">Signal</th><th scope="col">Maximum</th><th scope="col">How points are awarded</th></tr></thead>
-            <tbody>
-              <tr><td>Service fit</td><td>35</td><td>15 for the first confirmed Dakini workflow (customer service, sales/lead qualification/follow-up, knowledge/FAQs, or product recommendations), 10 for the second, then 5 each up to 35. Adjacent needs are shown as suggestions but do not add service-fit points.</td></tr>
-              <tr><td>Operating scale</td><td>20</td><td>5 for a customer-service/sales calling team, 4 for multiple branches, 6 for high call/customer volumes or peak demand, and 5 for explicit 24/7 or extended-hours evidence.</td></tr>
-              <tr><td>India and language fit</td><td>15</td><td>8 for evidence of an India market presence and 7 for multilingual, regional-language, dialect, or accent needs.</td></tr>
-              <tr><td>Integration readiness</td><td>10</td><td>6 for CRM/telephony/contact-center systems and 4 for APIs, customer records, or integration evidence.</td></tr>
-              <tr><td>Buying / growth signals</td><td>15</td><td>10 for explicit evaluation or adoption of AI/voice automation, 3 for relevant voice/customer-service/sales hiring, and 2 for expansion.</td></tr>
-              <tr><td>Public contactability</td><td>5</td><td>3 for a public business email and 2 for a phone number.</td></tr>
-              <tr><td>AI vendor exclusion</td><td>Score cap: 20</td><td>AI voice-agent, conversational AI, or contact-center solution providers are treated as competitors, excluded from High potential/Research, and capped at 20.</td></tr>
-            </tbody>
-          </table>
-        </div>
-        <p class="muted"><strong>High potential:</strong> score ≥70, configured ICP criteria match, a Dakini-aligned workflow is detected, and an explicit buying/automation signal is present. <strong>Research:</strong> score ≥45, ICP criteria match, and at least one aligned workflow is detected. ICP industry, use-case, and location settings gate the tier but do not add score points. Workflow opportunities inferred from adjacent use cases should be validated with the prospect.</p>
-      </details>
-      <p id="googleSetupHelp" class="google-help" role="status"></p>
-      <div class="metrics-heading"><span class="eyebrow">PORTFOLIO OVERVIEW</span><span class="muted">Updated from current prospect records</span></div>
-      <div id="dashboard" class="stats"></div>
-      <div class="lead-controls">
-        <label class="search-label">Search companies
-          <input id="companySearch" type="search" placeholder="Company, use case, email or phone">
-        </label>
-        <label>Fit
-          <select id="tierFilter">
-            <option value="all">All prospects</option>
-            <option value="Priority">High-potential</option>
-            <option value="Review">Research</option>
-            <option value="Low fit">Lower fit</option>
-          </select>
-        </label>
-      </div>
-      <p id="resultCount" class="muted result-count"></p>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th scope="col">Rank</th>
-              <th scope="col">Company</th>
-              <th scope="col">Fit</th>
-              <th scope="col">Voice-agent opportunity</th>
-              <th scope="col">Public contact</th>
-              <th scope="col">Details</th>
-            </tr>
-          </thead>
-          <tbody id="companies"></tbody>
-        </table>
-      </div>
-      <div class="pagination">
-        <button id="prevPage" type="button" class="secondary-button">Previous</button>
-        <span id="pageLabel" class="muted"></span>
-        <button id="nextPage" type="button" class="secondary-button">Next</button>
       </div>
     </section>
 
-    <details id="setup" class="card setup-card">
-      <summary>
-        <span><span class="eyebrow">TARGETING &amp; DATA</span><strong>ICP, sources &amp; crawl controls</strong></span>
-        <span class="muted">Configure target companies or run another crawl</span>
-      </summary>
-      <div class="setup-grid">
-        <section class="setup-panel crawl-panel">
-          <h2>Daily web discovery</h2>
-          <p class="muted">Searches recent public web results for companies buying voice automation or showing high-volume calling workflows across any industry. Scheduled for 09:00 Asia/Kolkata while this server is running.</p>
-          <p id="discoverySetupStatus" class="status-note"></p>
-        </section>
-        <section class="setup-panel">
-          <h2>Define your ICP</h2>
-          <p class="muted">Optional for daily discovery. The automatic search targets voice-agent fit across all industries.</p>
-          <form id="icpForm">
-            <label class="form-field">Profile name
-              <input id="icpName" placeholder="ICP name" value="AI Voice Agent - BFSI">
-            </label>
-            <label class="form-field">Target industries
-              <input id="industries" placeholder="e.g. BFSI, healthcare" value="BFSI">
-            </label>
-            <label class="form-field">Target locations
-              <input id="locations" placeholder="e.g. India, Tamil Nadu" value="India">
-            </label>
-            <label class="form-field">Relevant workflows
-              <input id="useCases" placeholder="e.g. collections, customer support" value="Collections, Customer Support">
-            </label>
-            <button>Create ICP</button>
-          </form>
-          <pre id="icpResult"></pre>
-        </section>
-        <section class="setup-panel">
-          <h2>Discover new public data sources</h2>
-          <p class="muted">Search the web for regulator registries, member directories, and company lists matched to your ICP. Discovered sources are checked for linked company websites and wait for your approval before crawling.</p>
-          <ol class="source-architecture" aria-label="Automatic source discovery stages">
-            <li><strong>Find</strong><span>Search for official registries and member lists</span></li>
-            <li><strong>Validate</strong><span>Check authority signals and company links</span></li>
-            <li><strong>Approve</strong><span>Review each source before trusting it</span></li>
-            <li><strong>Retrieve</strong><span>Crawl new companies and rank their fit</span></li>
-          </ol>
-          <button id="findSourcesBtn" class="secondary-button" type="button">Find data sources</button>
-          <p id="sourceDiscoveryStatus" class="status-note" role="status" aria-live="polite"></p>
-          <div id="sourceCandidateList" class="public-source-list" aria-live="polite"></div>
-        </section>
-        <section class="setup-panel">
-          <h2>Official company directories</h2>
-          <p class="muted">Add verified public directories as approved sources. Their listed companies are crawled from the linked company websites.</p>
-          <div id="publicSourceList" class="public-source-list" aria-live="polite"></div>
-          <pre id="publicSourceResult"></pre>
-        </section>
-        <section class="setup-panel">
-          <h2>Add an approved source</h2>
-          <p class="muted">Add a company website or a public directory containing company links.</p>
-          <form id="sourceForm">
-            <label class="form-field">Source name
-              <input id="sourceName" placeholder="e.g. Company Directory" value="Company Directory">
-            </label>
-            <label class="form-field">Public website or directory URL
-              <input id="sourceUrl" type="url" placeholder="https://example.com" value="https://rbi.org.in/scripts/banklinks.aspx">
-            </label>
-            <label class="checkbox-label"><input id="approved" type="checkbox" checked> Approved</label>
-            <button>Add Source</button>
-          </form>
-          <pre id="sourceResult"></pre>
-        </section>
-        <section class="setup-panel crawl-panel">
-          <h2>Run a prospect crawl</h2>
-          <p class="muted">Crawls approved sources, discovers directory-listed companies, and checks up to eight relevant pages per company.</p>
-          <button id="crawlBtn" type="button">Run ICP Crawl</button>
-          <pre id="jobResult">No crawl running.</pre>
-        </section>
+    <section id="workflow" class="section">
+      <div class="container">
+        <div class="section-heading centered">
+          <p class="eyebrow">HOW IT WORKS</p>
+          <h2>From raw information to confident execution.</h2>
+        </div>
+        <div class="step-grid">
+          <div class="step-card">
+            <span class="step-number">1</span>
+            <h3>Connect</h3>
+            <p>Bring in your knowledge sources, customer records, and documents.</p>
+          </div>
+          <div class="step-card">
+            <span class="step-number">2</span>
+            <h3>Understand</h3>
+            <p>AI reads context, identifies relevance, and extracts key signals.</p>
+          </div>
+          <div class="step-card">
+            <span class="step-number">3</span>
+            <h3>Recommend</h3>
+            <p>Surface summaries, risks, opportunities, and next-best actions.</p>
+          </div>
+          <div class="step-card">
+            <span class="step-number">4</span>
+            <h3>Act</h3>
+            <p>Move from insight to workflow execution with less manual coordination.</p>
+          </div>
+        </div>
       </div>
-    </details>
+    </section>
+
+    <section id="pricing" class="section alt-section">
+      <div class="container">
+        <div class="section-heading centered">
+          <p class="eyebrow">BUILT FOR REAL TEAMS</p>
+          <h2>Support, sales, operations, and knowledge teams in one place.</h2>
+        </div>
+        <div class="use-case-grid">
+          <article class="use-case-card">
+            <h3>Customer support</h3>
+            <p>Answer questions faster, summarize tickets, and escalate with full context.</p>
+          </article>
+          <article class="use-case-card">
+            <h3>Sales</h3>
+            <p>Prioritize opportunities, find relevant customer context, and automate follow-up.</p>
+          </article>
+          <article class="use-case-card">
+            <h3>Operations</h3>
+            <p>Reduce repetitive coordination, route requests, and maintain process clarity.</p>
+          </article>
+          <article class="use-case-card">
+            <h3>Knowledge teams</h3>
+            <p>Turn internal documentation into a searchable, actionable knowledge system.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section id="demo" class="section final-cta">
+      <div class="container cta-box">
+        <div>
+          <p class="eyebrow">READY TO BUILD</p>
+          <h2>Put AI to work across the information your team already has.</h2>
+        </div>
+        <div class="cta-actions">
+          <a class="button button-primary" href="/platform.html">Open the platform</a>
+          <a class="button button-secondary" href="mailto:hello@dakini.ai">Request a demo</a>
+        </div>
+      </div>
+    </section>
   </main>
-  <script src="/app.js"></script>
+
+  <footer class="site-footer">
+    <div class="container footer-inner">
+      <span>© 2026 Dakini AI</span>
+      <div>
+        <a href="/platform.html">Platform</a>
+        <a href="#product">Product</a>
+        <a href="#demo">Contact</a>
+      </div>
+    </div>
+  </footer>
 </body>
 </html>
