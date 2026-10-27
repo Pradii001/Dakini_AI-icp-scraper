@@ -60,6 +60,17 @@ const INDUSTRY_ALIASES = [
   }
 ];
 
+const SCORE_COMPONENT_MAXIMUMS = {
+  serviceFit: 30,
+  operatingScale: 25,
+  indiaMarketFit: 5,
+  integrationReadiness: 8,
+  buyingSignals: 15,
+  reachability: 5,
+  firstPartyWorkflowFit: 12
+};
+const HIGH_POTENTIAL_SCORE_THRESHOLD = 90;
+
 function normalizedText(value) {
   return typeof value === "string"
     ? value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()
@@ -116,9 +127,11 @@ function scoreLead(data, icp) {
           data.locations.some(found => normalizedText(found) === normalizedText(target))) ||
         sourceText.toLowerCase().includes(target.toLowerCase())
   );
-  const dakiniWorkflowMatches = [...new Set(detectedUseCases.filter(useCase =>
-    [...DAKINI_CORE_WORKFLOWS].some(workflow => workflowsMatch(useCase, workflow))
-  ))];
+  const dakiniWorkflowMatches = [...new Set(detectedUseCases
+    .map(useCase =>
+      [...DAKINI_CORE_WORKFLOWS].find(workflow => workflowsMatch(useCase, workflow))
+    )
+    .filter(Boolean))];
   const callingTeam = Boolean(data.callingTeam);
   const branches = Number(data.branches) || 0;
   const highCallVolume = Boolean(data.highCallVolume);
@@ -130,15 +143,21 @@ function scoreLead(data, icp) {
   const expansionSignal = Boolean(data.expansionSignal);
   const indiaMarketSignal = Boolean(data.indiaMarketSignal);
   const multilingualSignal = Boolean(data.multilingualSignal);
+  const websiteWorkflowSignals = data.websiteWorkflowSignals || {};
+  const firstPartyWorkflowFit =
+    (websiteWorkflowSignals.customerSupport === "found" ? 4 : 0) +
+    (websiteWorkflowSignals.enquiryForm === "found" ? 3 : 0) +
+    (websiteWorkflowSignals.faqs === "found" ? 3 : 0) +
+    (websiteWorkflowSignals.bookingWorkflow === "found" ? 2 : 0);
   const hasOperatingScaleSignal = callingTeam ||
     branches >= 2 ||
     highCallVolume ||
     extendedHours ||
     voiceHiringSignal;
   const components = {
-    serviceFit: Math.min(35, dakiniWorkflowMatches.length
-      ? 15 + (dakiniWorkflowMatches.length - 1) * 10
-      : 0),
+    serviceFit: dakiniWorkflowMatches.length
+      ? Math.min(30, 15 + (dakiniWorkflowMatches.length - 1) * 10)
+      : 0,
     operatingScale: Math.min(25,
       (callingTeam ? 5 : 0) +
       (branches >= 2 ? 4 : 0) +
@@ -147,18 +166,19 @@ function scoreLead(data, icp) {
       (voiceHiringSignal ? 4 : 0)
     ),
     indiaMarketFit:
-      (indiaMarketSignal ? 5 : 0) +
-      (multilingualSignal ? 5 : 0),
+      (indiaMarketSignal ? 3 : 0) +
+      (multilingualSignal ? 2 : 0),
     integrationReadiness:
-      (telephonyOrCrm ? 6 : 0) +
-      (systemIntegrationSignal ? 4 : 0),
+      (telephonyOrCrm ? 5 : 0) +
+      (systemIntegrationSignal ? 3 : 0),
     buyingSignals:
       (automationIntent ? 12 : 0) +
-      (voiceHiringSignal ? 2 : 0) +
-      (expansionSignal ? 1 : 0),
-    reachability: (data.roleEmail ? 3 : 0) + (data.phone ? 2 : 0)
+      (expansionSignal ? 3 : 0),
+    reachability: (data.roleEmail ? 3 : 0) + (data.phone ? 2 : 0),
+    firstPartyWorkflowFit
   };
-  const rawScore = Object.values(components).reduce((total, value) => total + value, 0);
+  const rawScore = Object.keys(SCORE_COMPONENT_MAXIMUMS)
+    .reduce((total, key) => total + components[key], 0);
   const aiSolutionProvider = Boolean(data.aiSolutionProvider);
   components.aiVendorExclusion = aiSolutionProvider ? -Math.max(0, rawScore - 20) : 0;
   const score = +(rawScore + components.aiVendorExclusion).toFixed(1);
@@ -167,7 +187,7 @@ function scoreLead(data, icp) {
     (!locations.length || locationMatches);
   const hasCoreWorkflow = dakiniWorkflowMatches.length > 0;
   const tier = !aiSolutionProvider &&
-    score >= 70 &&
+    score >= HIGH_POTENTIAL_SCORE_THRESHOLD &&
     strongIcpMatch &&
     hasCoreWorkflow &&
     Boolean(data.buyingSignal)
@@ -187,6 +207,7 @@ function scoreLead(data, icp) {
     buyingSignal: Boolean(data.buyingSignal),
     matchedUseCases: useCaseMatches,
     dakiniWorkflowMatches,
+    scoreComponentMaximums: SCORE_COMPONENT_MAXIMUMS,
     exclusionReason: aiSolutionProvider
       ? "This company appears to sell AI, voice-agent, or contact-center software rather than primarily operate as a potential customer."
       : "",
@@ -194,4 +215,4 @@ function scoreLead(data, icp) {
   };
 }
 
-module.exports = { scoreLead };
+module.exports = { HIGH_POTENTIAL_SCORE_THRESHOLD, scoreLead };

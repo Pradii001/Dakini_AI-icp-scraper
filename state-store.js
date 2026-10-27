@@ -2,7 +2,15 @@ const fs = require("node:fs");
 const path = require("node:path");
 const Database = require("better-sqlite3");
 
-const COLLECTIONS = ["icps", "sources", "jobs", "companies", "scrapedDomains", "sourceCandidates"];
+const COLLECTIONS = [
+  "icps",
+  "sources",
+  "jobs",
+  "companies",
+  "scrapedDomains",
+  "sourceCandidates",
+  "googleConnections"
+];
 
 function createStateStore(databasePath) {
   if (databasePath !== ":memory:") {

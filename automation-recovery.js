@@ -10,7 +10,8 @@ function selectRecoverableAutomationJobs(jobs) {
         job.kind === "daily_web_discovery" ||
         job.kind === "manual_web_discovery" ||
         job.kind === "engine_web_discovery" ||
-        job.kind === "lower_fit_research")
+        job.kind === "lower_fit_research" ||
+        job.kind === "stale_lead_research")
     )
     .sort((a, b) => (a.startedAt || "").localeCompare(b.startedAt || ""));
 }

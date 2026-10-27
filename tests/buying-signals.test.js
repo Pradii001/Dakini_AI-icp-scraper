@@ -33,3 +33,32 @@ test("does not count product descriptions without a buying action", () => {
     null
   );
 });
+
+test("rejects explicitly negated voice automation evaluation language", () => {
+  assert.equal(
+    findBuyingIntentSignal("We are not evaluating AI voice agents for customer support."),
+    null
+  );
+  assert.equal(
+    findBuyingIntentSignal("We stopped evaluating AI voice agents for customer support."),
+    null
+  );
+});
+
+test("does not mistake website marketing copy about visitors exploring for buyer intent", () => {
+  assert.equal(
+    findBuyingIntentSignal(
+      "Our websites with engaging user interfaces keep visitors exploring real-time chat integration and AI-powered customer support systems."
+    ),
+    null
+  );
+});
+
+test("requires a company-side decision action or procurement context", () => {
+  assert.equal(
+    findBuyingIntentSignal("The company provides AI voice agents for customer service."),
+    null
+  );
+  assert.ok(findBuyingIntentSignal("Our team is piloting AI voice agents for customer service."));
+  assert.ok(findBuyingIntentSignal("An RFP requests proposals for contact-center automation."));
+});

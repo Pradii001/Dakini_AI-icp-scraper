@@ -32,6 +32,17 @@ test("persists and restores all state collections and discovery metadata", () =>
     companies: [{ id: "company-1", score: { score: 82 } }],
     scrapedDomains: [{ id: "example.com" }],
     sourceCandidates: [{ id: "candidate-1", status: "pending" }],
+    googleConnections: [{
+      id: "browser-session",
+      encryptedTokens: {
+        version: 1,
+        iv: "iv",
+        authTag: "tag",
+        ciphertext: "ciphertext"
+      },
+      spreadsheetId: "sheet-id",
+      spreadsheetUrl: "https://docs.google.com/spreadsheets/d/sheet-id"
+    }],
     discoveryState: { lastRunAt: "2025-01-01T00:00:00.000Z" }
   };
 

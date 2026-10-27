@@ -20,8 +20,7 @@ test("selects 100 distinct daily queries with coverage across all Indian regions
   assert.equal(DAILY_DISCOVERY_QUERIES_PER_RUN, 100);
   assert.equal(queries.length, DAILY_DISCOVERY_QUERIES_PER_RUN);
   assert.equal(new Set(queries).size, 100);
-  assert.equal(regionalQueries.length, 92);
-  assert.equal(signalQueries.length, 8);
+  assert.equal(regionalQueries.length + signalQueries.length, DAILY_DISCOVERY_QUERIES_PER_RUN);
   assert.ok(regionalCounts.every(count => count >= 2));
   assert.ok(queries.some(query => query.startsWith("Karnataka ")));
   assert.ok(queries.some(query => query.startsWith("Ladakh ")));
@@ -88,6 +87,34 @@ test("supports focused industry targeting with appointment, hiring, branch, and 
   assert.ok(queries.some(query => /hiring|telecaller|receptionist/i.test(query)));
   assert.ok(queries.some(query => /branches|locations|offices/i.test(query)));
   assert.ok(queries.some(query => /website|enquiry form|faq/i.test(query)));
+});
+
+test("rotating queries cover expansion, ecosystem, ecommerce, registries, contact routes, technology, news, franchises, and languages", () => {
+  const queries = Array.from({ length: 4 }, (_, batchIndex) =>
+    selectDailyDiscoveryQueries(
+      new Date("2026-10-08T00:00:00Z"),
+      ["Tamil Nadu"],
+      ["E-commerce"],
+      false,
+      batchIndex
+    )
+  ).flat();
+  const text = queries.join("\n").toLowerCase();
+
+  for (const signal of [
+    "new branch",
+    "partners",
+    "freshdesk",
+    "order status",
+    "company registry",
+    "support email",
+    "helpdesk",
+    "business news",
+    "franchise",
+    "tamil"
+  ]) {
+    assert.ok(text.includes(signal), `expected rotating discovery query for ${signal}`);
+  }
 });
 
 test("rotates to a fresh batch of location-independent industry queries", () => {

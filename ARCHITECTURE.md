@@ -19,8 +19,10 @@ flowchart TD
     Approval -->|Yes| Directory[Retrieve approved directory]
     Approval -->|No| Review[Keep candidate pending review]
     Engine --> WebSearch[Search public web results]
+    Manual -->|City/state/country/category| GeoSources[Geographic source adapters]
     Directory --> CompanyURLs[Company URLs]
     WebSearch --> CompanyURLs
+    GeoSources --> CompanyURLs
     CompanyURLs --> Dedup[Normalize and deduplicate domains]
     Dedup --> Crawl[Crawl company pages]
     Manual --> Crawl
@@ -38,6 +40,9 @@ flowchart TD
     Engine --> SSE
 
     SearchProvider[Brave / Firecrawl / keyless web search] <--> WebSearch
+    GeoSources <--> OSM[OpenStreetMap Nominatim and Overpass]
+    GeoSources <--> Wikidata[Wikidata API]
+    GeoSources -. optional .-> SearXNG[Configured SearXNG]
     PublicSites[Public company and directory websites] <--> Fetch
     Persist <--> SQLite[(SQLite WAL database)]
     UI -->|OAuth and sync| Sheets[Google Sheets API]
@@ -47,25 +52,28 @@ flowchart TD
 
 | Component | Responsibility |
 | --- | --- |
-| `public/index.html`, `public/app.js`, `public/styles.css` | Operator UI, configuration, crawl controls, status and evidence display |
+| `public/platform.html`, `public/app.js`, `public/styles.css` | Operator UI, configuration, crawl controls, status and evidence display; `/` redirects to this application |
 | `server.js` | Express routes, orchestration, scheduler, extraction, scoring, and Google Sheets flow |
 | `company-legitimacy.js` | Scores same-domain first-party website identity, marketing-business, contact, company-profile, and page-coverage evidence separately from ICP fit |
 | `predictive-preprocessing.js` | Deterministic normalization, deduplication, signal ranking, bounded context selection, and provenance summary for crawled company text |
 | `source-discovery.js` | Builds rotating source-search queries from saved ICP profiles |
+| `geographical-discovery.js` | Geocodes city/state/country targets, queries OpenStreetMap and Wikidata, optionally queries configured SearXNG, and aggregates candidates and per-source diagnostics into the existing crawl flow |
 | `safe-fetch.js` | Validates public HTTP(S) targets, DNS results, redirects, response type, size, and request timeout |
 | `robots-policy.js` | Applies robots rules, caches them, and spaces requests by origin |
 | `bounded-concurrency.js` | Limits concurrent company-site work |
 | `background-task-tracker.js` | Tracks async work so shutdown can stop schedules and drain active jobs |
 | `graceful-shutdown.js` | Orders signal shutdown, HTTP close, task drain, final persistence, and database close |
 | `automation-recovery.js` | Selects interrupted source discovery and approved-directory retrieval jobs eligible for restart recovery |
-| `state-store.js` | Persists ICPs, sources, jobs, companies, candidates, and discovery metadata in SQLite |
-| `backup-database.js` | Produces a consistent SQLite online backup |
+| `state-store.js` | Persists ICPs, sources, jobs, companies, candidates, encrypted Google OAuth connections, and discovery metadata in SQLite |
+| `backup-database.js` | Produces a consistent SQLite online backup and verifies its integrity |
 
 ### Data path
 
 The store has `records` and `metadata` tables. Records are JSON payloads keyed by collection and ID (`icps`, `sources`, `jobs`, `companies`, `sourceCandidates`); discovery and engine status are stored as metadata. Each snapshot is written transactionally. WAL mode and full synchronous commits are enabled.
 
 Search results and extracted website text are untrusted evidence. A source candidate is not followed for company links until approved. Company evidence is scored against the saved ICP and displayed with its source; qualification tiers are prioritization, not proof of buying intent. The separate legitimacy assessment counts only pages hosted on the company's own domain; search snippets and directory pages cannot supply identity, contact, or profile evidence. Strong evidence requires corroborated company identity, marketing-business content, a public contact path present on first-party content, company-profile evidence, and at least two distinct first-party page paths. Automated discovery only counts these strong-evidence prospects as qualified; weaker results are retained for review, and directory-only records remain eligible for later website crawling. No result is represented as legally verified.
+
+Geographic discovery is operator-triggered and city/state/country-specific. It combines named OpenStreetMap listings, location-matched Wikidata entries, and optional configured SearXNG results, recording provider outcomes and source citations. These provide candidates only; each company site is independently checked through the normal robots-aware fetch and first-party evidence process. OSM attribution/license and Wikidata's CC0 status are shown in the UI. Daily web search uses rotating growth, ecosystem, e-commerce, registry/directory, contact-route, technology-stack, news, franchise, and language signals. These signals do not imply company dissatisfaction or buying intent. Saved records can be refreshed after 90 days without a recorded research run; refreshes retain the original capture date and record the latest research timestamp. Optional Overture Maps in the upstream project depends on remote Parquet/DuckDB and is not duplicated in the Node app.
 
 ### Predictive context preparation
 
@@ -85,12 +93,12 @@ This is deterministic, heuristic preprocessing—not an LLM call or a calibrated
 ## Restart and shutdown behavior
 
 - `SIGINT` / `SIGTERM` stop scheduler timers and the event stream, close the HTTP listener, drain tracked background tasks, persist state, and close SQLite.
-- Interrupted source-discovery scans, approved-directory retrievals, and broad web-discovery jobs resume after restart.
+- Interrupted source-discovery scans, approved-directory retrievals, broad web-discovery jobs, and saved-company refresh jobs resume after restart.
 - Web discovery stores completed query indexes and candidate evidence, then checkpoints completed company domains to avoid repeating successful work. A search interrupted before its checkpoint may be issued again; website fetch failures remain retryable.
-- Google OAuth credentials are held in memory and need reconnection after restart.
+- Google OAuth refresh credentials are encrypted with AES-256-GCM in SQLite. The operator must back up and restore `GOOGLE_TOKEN_ENCRYPTION_KEY` with the database to preserve Sheets access.
 
 The scheduler, job execution, SQLite file, and Google OAuth session are all single-process/single-server resources. This is not a multi-tenant or multi-instance architecture.
 
 ## Production boundary
 
-The supported deployment is one trusted operator behind an HTTPS reverse proxy, with Basic Authentication, one Node process, and a persistent local SQLite volume. See [README.md](./README.md) for deployment and backup procedures. A multi-user service would require a different identity/tenant model, a durable external queue, shared database, persistent OAuth credential storage, and distributed scheduling.
+The supported deployment is one trusted operator behind an HTTPS reverse proxy, with Basic Authentication, one Node process, and a persistent local SQLite volume. See [README.md](./README.md) for deployment and backup procedures. The authenticated `/api/operations/diagnostics` endpoint reports database readiness, job counts, and recent job status without returning prospect records. A multi-user service would require a different identity/tenant model, a durable external queue, shared database, persistent OAuth credential storage, and distributed scheduling.

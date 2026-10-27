@@ -39,4 +39,28 @@ function createLowerFitResearchTargets(companies, requestedIds) {
   return { targets, skippedInvalidUrl, skippedDuplicateDomain };
 }
 
-module.exports = { createLowerFitResearchTargets };
+function createStaleCompanyResearchTargets(companies, {
+  now = new Date(),
+  staleAfterDays = 90
+} = {}) {
+  if (!(now instanceof Date) || Number.isNaN(now.getTime())) {
+    throw new TypeError("now must be a valid Date.");
+  }
+  if (!Number.isInteger(staleAfterDays) || staleAfterDays < 1 || staleAfterDays > 3650) {
+    throw new RangeError("staleAfterDays must be an integer between 1 and 3650.");
+  }
+  const records = [...companies];
+  const staleBefore = now.getTime() - staleAfterDays * 24 * 60 * 60 * 1000;
+  const staleIds = records
+    .filter(company => {
+      const lastCheckedAt = Date.parse(company.lastResearchedAt || company.capturedAt || "");
+      return !Number.isFinite(lastCheckedAt) || lastCheckedAt <= staleBefore;
+    })
+    .map(company => company.id);
+  return {
+    ...createLowerFitResearchTargets(records, staleIds),
+    staleAfterDays
+  };
+}
+
+module.exports = { createLowerFitResearchTargets, createStaleCompanyResearchTargets };

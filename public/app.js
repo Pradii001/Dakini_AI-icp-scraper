@@ -34,8 +34,21 @@ async function api(url, options = {}) {
     headers: { "Content-Type": "application/json" },
     ...options
   });
-  const data = await response.json();
-  if (!response.ok) throw new Error(data.error || JSON.stringify(data));
+  let data;
+  try {
+    data = await response.json();
+  } catch {
+    if (!response.ok) {
+      throw new Error(`Request failed with HTTP ${response.status}.`);
+    }
+    throw new Error("The server returned an invalid response. Please retry or contact support.");
+  }
+  if (!response.ok) {
+    const message = typeof data?.error === "string"
+      ? data.error
+      : `Request failed with HTTP ${response.status}.`;
+    throw new Error(message);
+  }
   return data;
 }
 
@@ -339,6 +352,30 @@ $("runDiscoveryBtn").addEventListener("click", async () => {
   }
 });
 
+$("geographicDiscoveryForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const button = $("geographicDiscoveryBtn");
+  button.disabled = true;
+  $("geographicDiscoveryStatus").textContent = "Starting geographic business discovery...";
+  try {
+    const job = await api("/api/geographic-discovery/run-now", {
+      method: "POST",
+      body: JSON.stringify({
+        city: $("geographicCity").value,
+        state: $("geographicState").value,
+        country: $("geographicCountry").value,
+        category: $("geographicCategory").value || "all",
+        limit: Number($("geographicLimit").value)
+      })
+    });
+    $("geographicDiscoveryStatus").textContent = `Geographic discovery started for ${[$("geographicCity").value, $("geographicState").value, $("geographicCountry").value].filter(Boolean).join(", ")}.`;
+    pollDiscovery(job.id, true);
+  } catch (error) {
+    $("geographicDiscoveryStatus").textContent = error.message;
+    button.disabled = false;
+  }
+});
+
 $("researchLowerFitBtn").addEventListener("click", async () => {
   const lowerFitCompanies = allCompanies.filter(company => company.score?.tier === "Low fit");
   if (!lowerFitCompanies.length) {
@@ -357,6 +394,29 @@ $("researchLowerFitBtn").addEventListener("click", async () => {
     pollLowerFitResearchJob(job.id);
   } catch (error) {
     $("lowerFitResearchStatus").textContent = error.message;
+    button.disabled = false;
+  }
+});
+
+$("researchStaleBtn").addEventListener("click", async () => {
+  const staleDays = 90;
+  if (!window.confirm(
+    `Recheck saved company records not revisited in the last ${staleDays} days? Records without a research timestamp are included. This may take hours.`
+  )) return;
+
+  const button = $("researchStaleBtn");
+  button.disabled = true;
+  $("staleResearchStatus").textContent = "Queueing stale company records...";
+  try {
+    const job = await api("/api/companies/research-stale", {
+      method: "POST",
+      body: JSON.stringify({ staleAfterDays: staleDays })
+    });
+    $("staleResearchStatus").textContent =
+      `Queued ${job.totalTargets} saved leads for refresh (${job.staleAfterDays}+ days old).`;
+    pollLowerFitResearchJob(job.id);
+  } catch (error) {
+    $("staleResearchStatus").textContent = error.message;
     button.disabled = false;
   }
 });
@@ -772,6 +832,32 @@ function renderCompanies() {
   $("nextPage").disabled = currentPage >= pageCount;
 
   const scoreLabelsByVersion = {
+    8: [
+      ["Service fit", "serviceFit", 30],
+      ["Operating scale", "operatingScale", 25],
+      ["India/language fit", "indiaMarketFit", 5],
+      ["Integration readiness", "integrationReadiness", 8],
+      ["Buying/growth signals", "buyingSignals", 15],
+      ["Public contactability", "reachability", 5],
+      ["First-party workflow evidence", "firstPartyWorkflowFit", 12]
+    ],
+    7: [
+      ["Service fit", "serviceFit", 30],
+      ["Operating scale", "operatingScale", 25],
+      ["India/language fit", "indiaMarketFit", 5],
+      ["Integration readiness", "integrationReadiness", 8],
+      ["Buying/growth signals", "buyingSignals", 15],
+      ["Public contactability", "reachability", 5],
+      ["First-party workflow evidence", "firstPartyWorkflowFit", 12]
+    ],
+    6: [
+      ["Service fit", "serviceFit", 35],
+      ["Operating scale", "operatingScale", 25],
+      ["India/language fit", "indiaMarketFit", 10],
+      ["Integration readiness", "integrationReadiness", 10],
+      ["Buying signals", "buyingSignals", 15],
+      ["Contactability", "reachability", 5]
+    ],
     5: [
       ["Service fit", "serviceFit", 35],
       ["Operating scale", "operatingScale", 25],
@@ -948,25 +1034,49 @@ async function pollJob(jobId) {
   }
 }
 
-async function pollDiscovery(jobId) {
+async function pollDiscovery(jobId, geographic = false) {
   discoveryPollTimer = null;
   try {
     const status = await api("/api/discovery/status");
     const job = status.activeJob;
     if (!job || job.id !== jobId) {
+      const completedJob = await api(`/api/jobs/${encodeURIComponent(jobId)}`);
+      if (completedJob.kind === "manual_geographic_discovery") {
+        $("geographicDiscoveryStatus").textContent = completedJob.status === "failed"
+          ? `Geographic discovery failed: ${completedJob.error || "Unknown error"}`
+          : `Geographic discovery ${completedJob.status}: ${completedJob.geographicCandidatesFound} company websites found · ${completedJob.companiesVisited} crawled · ${completedJob.errors} errors · ${formatGeographicSourceStats(completedJob.geographicSourceStats)}${completedJob.geographicSourceNotes?.length ? ` · Notes: ${completedJob.geographicSourceNotes.join("; ")}` : ""}`;
+      }
       $("runDiscoveryBtn").disabled = false;
+      $("geographicDiscoveryBtn").disabled = false;
       await loadAll();
+      return;
+    }
+    if (job.kind === "manual_geographic_discovery") {
+      $("geographicDiscoveryStatus").textContent = job.geographicCandidatesFound
+        ? `Geographic discovery: ${job.geographicCandidatesFound} company websites found · ${job.companiesVisited || 0} crawled · ${job.pages || 0} pages scanned · ${job.errors || 0} errors · ${formatGeographicSourceStats(job.geographicSourceStats)}${job.geographicSourceNotes?.length ? ` · Notes: ${job.geographicSourceNotes.join("; ")}` : ""}`
+        : `${job.currentActivity || "Searching geographic sources"} · ${job.errors || 0} errors`;
+      discoveryPollTimer = setTimeout(() => pollDiscovery(jobId, geographic), 4000);
       return;
     }
     const dailyTarget = job.dailyTargetEnabled
       ? ` · ${job.dailyQualifiedProspects || 0}/${job.dailyQualifiedProspectsTarget} qualified today · batch ${job.searchBatches || 1}`
       : "";
     $("discoveryStatus").textContent = `Searching ${job.searchesCompleted}/${status.dailySearchQueries} queries · ${job.qualifiedProspectsAdded || 0} qualified prospects added${dailyTarget} · ${job.companiesVisited} sites visited · ${job.pages} pages scanned · ${job.errors} errors${job.rateLimited ? " · provider rate limit reached" : ""}`;
-    discoveryPollTimer = setTimeout(() => pollDiscovery(jobId), 4000);
+    discoveryPollTimer = setTimeout(() => pollDiscovery(jobId, geographic), 4000);
   } catch (error) {
-    $("discoveryStatus").textContent = error.message;
+    $(geographic ? "geographicDiscoveryStatus" : "discoveryStatus").textContent =
+      `Discovery status error: ${error.message}`;
     $("runDiscoveryBtn").disabled = false;
+    $("geographicDiscoveryBtn").disabled = false;
   }
+}
+
+function formatGeographicSourceStats(sourceStats = {}) {
+  return Object.entries(sourceStats)
+    .map(([source, stats]) =>
+      `${source}: ${stats.unique || 0} found (${stats.status}${stats.error ? `, ${stats.error}` : ""})`
+    )
+    .join(" · ");
 }
 
 async function pollSourceDiscovery() {
@@ -1021,10 +1131,22 @@ async function pollLowerFitResearchJob(jobId) {
   clearTimeout(lowerFitResearchPollTimer);
   try {
     const job = await api(`/api/jobs/${encodeURIComponent(jobId)}`);
-    $("lowerFitResearchStatus").textContent =
-      `${job.status === "queued" ? "Queued" : "Re-researching"} ${job.completedTargets}/${job.totalTargets} · ${job.researchedCompanies} sites refreshed · ${job.upgradedToReview} Research · ${job.upgradedToPriority} High potential · ${job.errors} errors`;
+    const stale = job.kind === "stale_lead_research";
     const finished = !["queued", "running"].includes(job.status);
+    const activity = job.status === "queued"
+      ? "Queued"
+      : job.status === "failed"
+        ? "Failed"
+        : job.status === "completed_with_errors"
+          ? stale ? "Refresh complete with errors" : "Research complete with errors"
+          : finished
+            ? stale ? "Refresh complete" : "Research complete"
+            : stale ? "Refreshing" : "Re-researching";
+    const status = `${activity} ${job.completedTargets}/${job.totalTargets} · ${job.researchedCompanies} sites refreshed · ${job.errors} errors${job.error ? ` · ${job.error}` : ""}`;
+    $("lowerFitResearchStatus").textContent = stale ? "" : status;
+    $("staleResearchStatus").textContent = stale ? status : "";
     $("researchLowerFitBtn").disabled = !finished;
+    $("researchStaleBtn").disabled = !finished;
     if (finished) {
       await loadAll();
     } else {
@@ -1036,6 +1158,7 @@ async function pollLowerFitResearchJob(jobId) {
   } catch (error) {
     $("lowerFitResearchStatus").textContent = `Research status error: ${error.message}`;
     $("researchLowerFitBtn").disabled = false;
+    $("researchStaleBtn").disabled = false;
   }
 }
 
@@ -1066,10 +1189,11 @@ async function loadAll() {
       job.kind !== "manual_web_discovery"
     );
     const lowerFitJob = [...jobs].reverse().find(job =>
-      job.kind === "lower_fit_research" &&
+      ["lower_fit_research", "stale_lead_research"].includes(job.kind) &&
       ["running", "queued"].includes(job.status)
     );
     $("researchLowerFitBtn").disabled = Boolean(lowerFitJob);
+    $("researchStaleBtn").disabled = Boolean(lowerFitJob);
     if (lowerFitJob) {
       pollLowerFitResearchJob(lowerFitJob.id);
     } else if (!lowerFitResearchPollTimer) {
@@ -1082,6 +1206,9 @@ async function loadAll() {
     ));
     $("runDiscoveryBtn").disabled = !discoveryStatus.configured ||
       Boolean(discoveryStatus.activeJob || discoveryStatus.activePublicDirectoryRetrieval || activeCompanyCrawl);
+    $("geographicDiscoveryBtn").disabled = Boolean(
+      discoveryStatus.activeJob || discoveryStatus.activePublicDirectoryRetrieval || activeCompanyCrawl
+    );
     $("findSourcesBtn").disabled = Boolean(
       discoveryStatus.activeSourceDiscovery || discoveryStatus.activeJob ||
       discoveryStatus.activePublicDirectoryRetrieval || activeCompanyCrawl
@@ -1110,6 +1237,17 @@ async function loadAll() {
       $("discoveryStatus").textContent = `Retrieving official public directories · ${job.companiesVisited}/${job.companiesDiscovered} companies visited · ${job.qualifiedProspectsAdded || 0} qualified prospects added · ${job.pages} pages · ${job.errors} errors`;
       $("discoverySetupStatus").textContent = `The scheduled retrieval is processing approved public directories ahead of broad web discovery. Previously captured companies are skipped; only Priority and Research-tier candidates are retained.`;
       $("runDiscoveryBtn").disabled = true;
+    } else if (discoveryStatus.activeJob?.kind === "manual_geographic_discovery") {
+      const job = discoveryStatus.activeJob;
+      $("discoveryStatus").textContent = "Geographic business discovery is running.";
+      $("geographicDiscoveryStatus").textContent = job.geographicCandidatesFound
+        ? `Geographic discovery: ${job.geographicCandidatesFound} company websites found · ${job.companiesVisited || 0} crawled · ${job.pages || 0} pages scanned · ${job.errors || 0} errors · ${formatGeographicSourceStats(job.geographicSourceStats)}${job.geographicSourceNotes?.length ? ` · Notes: ${job.geographicSourceNotes.join("; ")}` : ""}`
+        : `${job.currentActivity || "Searching geographic sources"} · ${job.errors || 0} errors`;
+      $("discoverySetupStatus").textContent = "Geographic candidates are checked through the existing permitted website crawl and evidence pipeline.";
+      $("runDiscoveryBtn").disabled = true;
+      if (!discoveryPollTimer) {
+        discoveryPollTimer = setTimeout(() => pollDiscovery(job.id, true), 4000);
+      }
     } else if (discoveryStatus.activeJob) {
       const job = discoveryStatus.activeJob;
       const providerPlan = discoveryStatus.authenticatedSearchConfigured
@@ -1126,10 +1264,10 @@ async function loadAll() {
         : "";
       $("discoveryStatus").textContent = `Searching with ${discoveryStatus.provider} · ${job.searchesCompleted}/${job.totalSearchQueries || discoveryStatus.dailySearchQueries} queries · ${job.qualifiedProspectsAdded || 0} qualified prospects added${dailyTarget} · ${job.companiesVisited}/${job.companiesDiscovered} sites visited · ${job.pages} pages${job.rateLimited ? " · provider rate limit reached" : ""}`;
       $("discoverySetupStatus").textContent = job.dailyTargetEnabled
-        ? `Structured daily flow: search industry and buying-signal queries, deduplicate company domains, crawl first-party sites, verify legitimacy and ICP fit, and count only newly captured Priority/Research prospects that pass the legitimacy gate. Target: ${job.dailyQualifiedProspectsTarget} qualified prospects today; ${Math.max(0, job.dailyQualifiedProspectsTarget - (job.dailyQualifiedProspects || discoveryStatus.dailyQualifiedProspects))} remaining. It continues with rotated query batches until the target is reached or the next scheduled window begins. Search coverage, provider quotas, crawl permissions, and fit criteria can prevent reaching the target. ${directorySchedule} ${providerPlan} Schedule: ${discoveryStatus.schedule}.`
+        ? `Structured daily flow: search industry and buying-signal queries, deduplicate company domains, crawl first-party sites, verify legitimacy and ICP fit, and count only newly captured 90+ Priority prospects that pass the legitimacy gate. Target: ${job.dailyQualifiedProspectsTarget} high-potential prospects today; ${Math.max(0, job.dailyQualifiedProspectsTarget - (job.dailyQualifiedProspects || discoveryStatus.dailyQualifiedProspects))} remaining. It continues with rotated query batches until the target is reached or the next scheduled window begins. Search coverage, provider quotas, crawl permissions, and fit criteria can prevent reaching the target. ${directorySchedule} ${providerPlan} Schedule: ${discoveryStatus.schedule}.`
         : `The system runs ${job.totalSearchQueries || discoveryStatus.dailySearchQueries} searches and requests up to ${discoveryStatus.resultsPerQuery} results per query, subject to provider quotas and search coverage. It checks company homepages and up to ${discoveryStatus.maxPagesPerCompany} relevant pages per site, with up to ${discoveryStatus.crawlConcurrency} company sites in parallel; previously saved domains are not added again.${directorySchedule} ${providerPlan} Schedule: ${discoveryStatus.schedule}. Next run: ${formatDate(discoveryStatus.nextRunAt)}.`;
       $("runDiscoveryBtn").disabled = true;
-      if (!discoveryPollTimer) discoveryPollTimer = setTimeout(() => pollDiscovery(job.id), 4000);
+      if (!discoveryPollTimer) discoveryPollTimer = setTimeout(() => pollDiscovery(job.id, false), 4000);
     } else {
       const lastSummary = discoveryStatus.lastRunSummary
         ? ` Last run: ${discoveryStatus.lastRunSummary.qualifiedProspectsAdded || 0} qualified prospects added from ${discoveryStatus.lastRunSummary.sitesVisited} sites.${discoveryStatus.lastRunSummary.dailyTarget ? ` Daily total ${discoveryStatus.lastRunSummary.dailyQualifiedProspects}/${discoveryStatus.lastRunSummary.dailyTarget} (${discoveryStatus.lastRunSummary.dailyTargetMet ? "target reached" : "shortfall"}).` : ""}`
@@ -1146,7 +1284,7 @@ async function loadAll() {
         ? "Authenticated search is configured; provider quotas still apply."
         : "Keyless search has lower rate limits; configure FIRECRAWL_API_KEY or BRAVE_SEARCH_API_KEY for higher provider limits.";
       $("discoveryStatus").textContent = `${discoveryStatus.provider} · ${lastRun}${lastSummary} Next search: ${formatDate(discoveryStatus.nextRunAt)} · ${discoveryStatus.schedule}.${lastError}${directoryError}`;
-      $("discoverySetupStatus").textContent = `Daily target: ${discoveryStatus.dailyQualifiedProspects}/${discoveryStatus.dailyQualifiedProspectsTarget} newly captured, legitimacy-qualified Priority/Research prospects. Scheduled discovery rotates query batches and continues until the target is reached or the next daily window starts. Search-provider quotas, public index coverage, crawl permissions, and qualification criteria can cause a shortfall; 300 is a goal, not a guaranteed count. Each batch searches up to ${discoveryStatus.dailySearchQueries} queries and requests up to ${discoveryStatus.resultsPerQuery} results per query. Previously saved domains are not added again.${directorySummary}${directoryError} ${providerPlan} The server must remain running for scheduled discovery.${lastError}`;
+      $("discoverySetupStatus").textContent = `Daily target: ${discoveryStatus.dailyQualifiedProspects}/${discoveryStatus.dailyQualifiedProspectsTarget} newly captured, legitimacy-qualified High-potential prospects only (90+ score). Scheduled discovery rotates query batches and continues until the target is reached or the next daily window starts. Search-provider quotas, public index coverage, crawl permissions, and qualification criteria can cause a shortfall; 300 is a goal, not a guaranteed count. Each batch searches up to ${discoveryStatus.dailySearchQueries} queries and requests up to ${discoveryStatus.resultsPerQuery} results per query. Previously saved domains are not added again.${directorySummary}${directoryError} ${providerPlan} The server must remain running for scheduled discovery.${lastError}`;
     }
 
     googleConnected = googleStatus.connected;

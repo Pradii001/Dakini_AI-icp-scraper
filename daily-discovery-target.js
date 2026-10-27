@@ -21,7 +21,9 @@ function countDailyQualifiedProspects(companies, now, timeZone) {
   for (const company of records || []) {
     if (dateKeyInTimeZone(company?.capturedAt, timeZone) !== today) continue;
     if (!company.legitimacy?.canAutoQualify) continue;
-    if (!["Priority", "Review"].includes(company.score?.tier)) continue;
+    if (company.score?.tier !== "Priority" ||
+        !Number.isFinite(company.score.score) ||
+        company.score.score < 90) continue;
     count += 1;
   }
   return count;

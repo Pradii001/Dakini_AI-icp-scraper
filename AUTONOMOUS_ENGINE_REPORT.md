@@ -46,8 +46,8 @@ This upgrade hardens the documented single-server deployment; it does not turn t
 
 1. **Queue durability:** The job runner and timers remain in-process. SQLite records progress but is not a lease-based work queue; only one server instance is supported.
 2. **Runtime operations:** Use a process manager with restart policy and a graceful-stop window long enough to drain current work. Monitor `/api/health` and job error summaries; configure alerts and test restore from backups.
-3. **Secrets and OAuth:** Keep search keys, Basic Auth credentials, and Google OAuth secrets in a protected secret store/environment. Google OAuth sessions are memory-only and must be reconnected after restart.
+3. **Secrets and OAuth:** Keep search keys, Basic Auth credentials, Google OAuth secrets, and `GOOGLE_TOKEN_ENCRYPTION_KEY` in a protected secret store/environment. Google refresh tokens are now AES-256-GCM encrypted in SQLite; losing the encryption key prevents recovery of the saved Sheets connection.
 4. **Data governance:** Define retention/deletion periods for prospects, source evidence, database backups, and logs; protect the database and backups as business contact data.
-5. **Validation before live launch:** Run `npm ci` and `npm test`, verify real provider quotas, test robots and crawl behavior against target sites, configure HTTPS/reverse-proxy restrictions, and perform a backup/restore exercise.
+5. **Validation before live launch:** Run `npm ci` and `npm test`, verify real provider quotas, test robots and crawl behavior against target sites, configure HTTPS/reverse-proxy restrictions, schedule integrity-checked backups, and perform a restore exercise.
 
 For multi-user or multi-instance operation, replace the shared Basic Auth model and process-local session state, move jobs to a durable external queue with leases and retries, use a server database with tenant isolation, and add distributed scheduling and observability. That is a separate architecture change, not a safe incremental switch for the current app.

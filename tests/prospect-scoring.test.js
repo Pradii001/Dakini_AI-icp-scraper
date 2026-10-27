@@ -61,7 +61,8 @@ test("maps ICP workflow labels to their equivalent detected workflow", () => {
   assert.equal(result.strongIcpMatch, true);
   assert.deepEqual(result.matchedUseCases, ["Customer Service"]);
   assert.deepEqual(result.dakiniWorkflowMatches, ["customer support"]);
-  assert.equal(result.tier, "Review");
+  assert.equal(result.score, 42);
+  assert.equal(result.tier, "Low fit");
 });
 
 test("appointment and booking signals alone are not direct Dakini core fit", () => {
@@ -76,7 +77,7 @@ test("appointment and booking signals alone are not direct Dakini core fit", () 
     { industries: ["Healthcare"], locations: [], useCases: [] }
   );
 
-  assert.equal(result.score, 27);
+  assert.equal(result.score, 24);
   assert.equal(result.tier, "Low fit");
   assert.deepEqual(result.dakiniWorkflowMatches, []);
 });
@@ -101,7 +102,13 @@ test("awards Priority only when strong score, explicit buying intent, and core f
       expansionSignal: true,
       buyingSignal: true,
       roleEmail: "support@clinic.example",
-      phone: "+91 12345 67890"
+      phone: "+91 12345 67890",
+      websiteWorkflowSignals: {
+        customerSupport: "found",
+        enquiryForm: "found",
+        faqs: "found",
+        bookingWorkflow: "found"
+      }
     }),
     {
       industries: ["Clinics"],
@@ -153,6 +160,109 @@ test("does not award Research tier for workflow evidence without operational or 
     { industries: [], locations: [], useCases: [] }
   );
 
-  assert.equal(result.score, 30);
+  assert.equal(result.score, 25);
   assert.equal(result.tier, "Low fit");
+});
+
+test("deduplicates equivalent core workflows so repeated wording cannot inflate service fit", () => {
+  const result = scoreLead(
+    makeData({
+      detectedUseCases: [
+        "customer support",
+        "customer service",
+        "customer care",
+        "knowledge and FAQs",
+        "FAQs"
+      ]
+    }),
+    { industries: [], locations: [], useCases: [] }
+  );
+
+  assert.deepEqual(result.dakiniWorkflowMatches, [
+    "customer support",
+    "knowledge and FAQs"
+  ]);
+  assert.equal(result.components.serviceFit, 25);
+});
+
+test("scores only positively detected first-party workflows and documents the component ceiling", () => {
+  const result = scoreLead(
+    makeData({
+      detectedUseCases: ["customer support"],
+      websiteWorkflowSignals: {
+        customerSupport: "found",
+        enquiryForm: "found",
+        faqs: "not_detected",
+        bookingWorkflow: "found"
+      }
+    }),
+    { industries: [], locations: [], useCases: [] }
+  );
+
+  assert.equal(result.components.firstPartyWorkflowFit, 9);
+  assert.equal(result.scoreComponentMaximums.firstPartyWorkflowFit, 12);
+  assert.equal(result.components.buyingSignals, 0);
+});
+
+test("keeps explicit buying intent necessary for Priority even with maximum operational fit", () => {
+  const result = scoreLead(
+    makeData({
+      detectedUseCases: ["customer support", "sales follow-up", "knowledge and FAQs"],
+      callingTeam: true,
+      branches: 4,
+      highCallVolume: true,
+      extendedHours: true,
+      voiceHiringSignal: true,
+      indiaMarketSignal: true,
+      multilingualSignal: true,
+      telephonyOrCrm: true,
+      systemIntegrationSignal: true,
+      expansionSignal: true,
+      roleEmail: "support@clinic.example",
+      phone: "+91 12345 67890",
+      websiteWorkflowSignals: {
+        customerSupport: "found",
+        enquiryForm: "found",
+        faqs: "found",
+        bookingWorkflow: "found"
+      },
+      buyingSignal: false
+    }),
+    { industries: [], locations: [], useCases: [] }
+  );
+
+  assert.equal(result.score, 88);
+  assert.equal(result.tier, "Review");
+});
+
+test("requires 90 points for Priority and keeps a strong 89-point lead in Research", () => {
+  const result = scoreLead(
+    makeData({
+      detectedUseCases: ["customer support", "sales follow-up", "knowledge and FAQs"],
+      callingTeam: true,
+      branches: 4,
+      highCallVolume: true,
+      extendedHours: true,
+      voiceHiringSignal: true,
+      indiaMarketSignal: true,
+      multilingualSignal: true,
+      telephonyOrCrm: true,
+      systemIntegrationSignal: true,
+      automationIntent: true,
+      buyingSignal: true,
+      roleEmail: "",
+      phone: "",
+      expansionSignal: false,
+      websiteWorkflowSignals: {
+        customerSupport: "found",
+        enquiryForm: "found",
+        faqs: "not_detected",
+        bookingWorkflow: "found"
+      }
+    }),
+    { industries: [], locations: [], useCases: [] }
+  );
+
+  assert.equal(result.score, 89);
+  assert.equal(result.tier, "Review");
 });

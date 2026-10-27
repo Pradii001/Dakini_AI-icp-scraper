@@ -94,14 +94,24 @@ const DISCOVERY_BUYING_SIGNAL_QUERIES = [
   '"multiple branches" OR locations OR offices {industry} {location}',
   '"website enquiry form" OR FAQ OR "customer support" {industry} {location}',
   '"AI voice agent" OR "voice AI" {industry} {location}',
-  '"customer support automation" RFP OR pilot {industry} {location}'
+  '"customer support automation" RFP OR pilot {industry} {location}',
+  '"new branch" OR "branch opening" OR "new location" OR acquisition OR "new service" {industry} {location}',
+  'partners OR consultants OR agencies serving {industry} {location} customer support integration',
+  '"uses" Freshdesk OR Zendesk OR Intercom OR Salesforce {industry} {location}',
+  '"order status" OR delivery OR returns OR refunds customer service {industry} {location}',
+  'government company registry OR industry association directory {industry} {location}',
+  '"support email" OR "contact number" OR enquiry form OR booking link {industry} {location}',
+  'CRM OR helpdesk OR booking software OR customer communication technology {industry} {location}',
+  'business news expansion OR new product OR new customers OR customer service initiative {industry} {location}',
+  'franchise network OR franchise operators OR franchise locations {industry} {location}',
+  'Tamil OR Hindi OR English multilingual customer support {industry} {location}'
 ];
 
 const DAILY_DISCOVERY_QUERIES_PER_RUN = 100;
 const DISCOVERY_INDUSTRY_QUERIES_PER_RUN =
   DAILY_DISCOVERY_QUERIES_PER_RUN - DISCOVERY_BUYING_SIGNAL_QUERIES.length;
 const DISCOVERY_RELEVANCE_SIGNAL =
-  /\b(?:banking|financial services|insurance|healthcare|clinic|medical|retail|e-?commerce|education|school|college|real estate|property|hospitality|hotel|recruitment|staffing|logistics|telecom|professional services|manufacturing|automotive|travel|saas|marketing|seo|paid media|appointment|consultation|reservation|booking|receptionist|telecaller|customer support|customer service|multiple branches|branch(?:es| locations)?|locations?|offices?|enquir(?:y|ies)|inquir(?:y|ies)|faq|help|contact|voice ai|voice agent)\b/i;
+  /\b(?:banking|financial services|insurance|healthcare|clinic|medical|retail|e-?commerce|education|school|college|real estate|property|hospitality|hotel|recruitment|staffing|logistics|telecom|professional services|manufacturing|automotive|travel|saas|marketing|seo|paid media|appointment|consultation|reservation|booking|receptionist|telecaller|customer support|customer service|multiple branches|branch(?:es| locations)?|locations?|offices?|enquir(?:y|ies)|inquir(?:y|ies)|faq|help|contact|voice ai|voice agent|expansion|acquisition|new service|new product|partner|consultant|agency|order status|delivery|returns|refunds|registry|association|support email|CRM|helpdesk|booking software|business news|franchise|Tamil|Hindi|English|Freshdesk|Zendesk|Intercom|Salesforce)\b/i;
 const MARKETING_SEARCH_SIGNAL =
   /\b(?:digital marketing|marketing (?:agenc(?:y|ies)|company|automation)|seo agency|search engine optimization|performance marketing|paid media|social media (?:marketing|agenc(?:y|ies))|content marketing|lead generation|growth marketing)\b/i;
 

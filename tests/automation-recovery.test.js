@@ -11,12 +11,13 @@ test("selects interrupted source discovery and directory retrieval jobs in creat
     { id: "running-retrieval", directoryRetrieval: true, status: "running" },
     { id: "manual-directory", kind: "manual_public_directory_retrieval", status: "interrupted", startedAt: "2026-02-03" },
     { id: "engine-web", kind: "engine_web_discovery", status: "interrupted", startedAt: "2026-02-07" },
-    { id: "lower-fit", kind: "lower_fit_research", status: "interrupted", startedAt: "2026-02-08" }
+    { id: "lower-fit", kind: "lower_fit_research", status: "interrupted", startedAt: "2026-02-08" },
+    { id: "stale-leads", kind: "stale_lead_research", status: "interrupted", startedAt: "2026-02-09" }
   ];
 
   assert.deepEqual(
     selectRecoverableAutomationJobs(jobs).map(job => job.id),
-    ["source-scan", "retrieval-late", "manual-directory", "manual-web", "daily-web", "engine-web", "lower-fit"]
+    ["source-scan", "retrieval-late", "manual-directory", "manual-web", "daily-web", "engine-web", "lower-fit", "stale-leads"]
   );
 });
 

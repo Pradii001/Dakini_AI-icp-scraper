@@ -1,13 +1,18 @@
 const assert = require("node:assert/strict");
+const crypto = require("node:crypto");
 const { spawn } = require("node:child_process");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { after, before, test } = require("node:test");
 const { createStateStore } = require("../state-store");
+const { encryptOAuthTokens } = require("../encrypted-oauth-tokens");
 
 const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "dakini-server-test-"));
 const databaseFile = path.join(temporaryDirectory, "server.sqlite");
+const googleTokenEncryptionKey = crypto.randomBytes(32).toString("hex");
+const restoredGoogleSessionId = "restored-google-session";
+const restoredSpreadsheetUrl = "https://docs.google.com/spreadsheets/d/restored-sheet";
 let child;
 let baseUrl;
 
@@ -25,6 +30,12 @@ before(async () => {
     }],
     scrapedDomains: [{ id: "previously-scraped.example" }],
     sourceCandidates: [],
+    googleConnections: [{
+      id: restoredGoogleSessionId,
+      encryptedTokens: encryptOAuthTokens({ refresh_token: "test-refresh-token" }, googleTokenEncryptionKey),
+      spreadsheetId: "restored-sheet",
+      spreadsheetUrl: restoredSpreadsheetUrl
+    }],
     discoveryState: {}
   });
   seedStore.close();
@@ -41,6 +52,9 @@ before(async () => {
       NODE_ENV: "test",
       APP_USERNAME: "test-operator",
       APP_PASSWORD: "test-password-long-enough",
+      GOOGLE_CLIENT_ID: "test-client-id",
+      GOOGLE_CLIENT_SECRET: "test-client-secret",
+      GOOGLE_TOKEN_ENCRYPTION_KEY: googleTokenEncryptionKey,
       DAKINI_STATE_FILE: "",
       DAKINI_DATABASE_FILE: databaseFile
     },
@@ -103,6 +117,15 @@ test("provides state and city options for the location picker", async () => {
   assert.ok(config.targetStates.includes("Puducherry"));
   assert.ok(config.targetAreas.includes("Bengaluru"));
   assert.ok(config.targetAreas.includes("Mumbai"));
+  const invalidGeographicRequest = await fetch(`${baseUrl}/api/geographic-discovery/run-now`, {
+    method: "POST",
+    headers: {
+      authorization: `Basic ${credentials}`,
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({ city: " ", category: "all" })
+  });
+  assert.equal(invalidGeographicRequest.status, 400);
 });
 
 test("protects the application API with HTTP Basic authentication", async () => {
@@ -117,17 +140,48 @@ test("protects the application API with HTTP Basic authentication", async () => 
   });
   assert.equal(authenticated.status, 200);
   assert.deepEqual(await authenticated.json(), []);
+  const authenticatedHome = await fetch(`${baseUrl}/`, {
+    headers: { authorization: `Basic ${credentials}` },
+    redirect: "manual"
+  });
+  assert.equal(authenticatedHome.status, 302);
+  assert.equal(authenticatedHome.headers.get("location"), "/platform.html");
+  const removedMarketingHomepage = await fetch(`${baseUrl}/index.html`, {
+    headers: { authorization: `Basic ${credentials}` }
+  });
+  assert.equal(removedMarketingHomepage.status, 404);
   const authenticatedUi = await fetch(`${baseUrl}/platform.html`, {
     headers: { authorization: `Basic ${credentials}` }
   });
   assert.equal(authenticatedUi.status, 200);
   const uiHtml = await authenticatedUi.text();
   assert.match(uiHtml, /Find your next voice-agent customer/);
+  assert.match(uiHtml, /option value="all" selected/);
+  assert.match(uiHtml, /option value="Priority">High-potential \(90\+/);
   assert.match(uiHtml, /Retrieve approved sources/);
   assert.match(uiHtml, /approvedDirectoryList/);
   assert.match(uiHtml, /includeCuratedSources/);
   assert.match(uiHtml, /downloadCsvBtn/);
   assert.match(uiHtml, /researchLowerFitBtn/);
+  assert.match(uiHtml, /geographicDiscoveryForm/);
+  assert.match(uiHtml, /researchStaleBtn/);
+});
+
+test("restores the encrypted Google Sheets connection from SQLite after startup", async () => {
+  const credentials = Buffer.from("test-operator:test-password-long-enough").toString("base64");
+  const response = await fetch(`${baseUrl}/api/google/status`, {
+    headers: {
+      authorization: `Basic ${credentials}`,
+      cookie: `dakini_google_session=${restoredGoogleSessionId}`
+    }
+  });
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), {
+    configured: true,
+    connected: true,
+    spreadsheetUrl: restoredSpreadsheetUrl
+  });
 });
 
 test("clears downloaded prospects while preserving their scraped-domain history", async () => {
@@ -174,12 +228,30 @@ test("reports the daily qualified-prospect target and local-day progress", async
   const response = await fetch(`${baseUrl}/api/discovery/status`, {
     headers: { authorization: `Basic ${credentials}` }
   });
-
   assert.equal(response.status, 200);
   const status = await response.json();
   assert.equal(status.dailyQualifiedProspectsTarget, 300);
   assert.equal(status.dailyQualifiedProspects, 0);
   assert.match(status.localDate, /^\d{4}-\d{2}-\d{2}$/);
+});
+
+test("provides authenticated operational diagnostics without exposing stored prospect data", async () => {
+  const unauthenticated = await fetch(`${baseUrl}/api/operations/diagnostics`);
+  assert.equal(unauthenticated.status, 401);
+
+  const credentials = Buffer.from("test-operator:test-password-long-enough").toString("base64");
+  const response = await fetch(`${baseUrl}/api/operations/diagnostics`, {
+    headers: { authorization: `Basic ${credentials}` }
+  });
+
+  assert.equal(response.status, 200);
+  const diagnostics = await response.json();
+  assert.equal(diagnostics.status, "ok");
+  assert.equal(diagnostics.database, "ok");
+  assert.equal(typeof diagnostics.uptimeSeconds, "number");
+  assert.equal(diagnostics.jobs.total, 0);
+  assert.deepEqual(diagnostics.jobs.recent, []);
+  assert.equal("companies" in diagnostics, false);
 });
 
 test("rejects lower-fit research requests with prospect IDs missing from the portfolio", async () => {

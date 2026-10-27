@@ -7,8 +7,13 @@ const { z } = require("zod");
 const cheerio = require("cheerio");
 const { google } = require("googleapis");
 const { createStateStore } = require("./state-store");
+const { decryptOAuthTokens, encryptOAuthTokens, parseEncryptionKey } = require("./encrypted-oauth-tokens");
 const { fetchPublicPage } = require("./safe-fetch");
 const { buildSourceDiscoveryQueries } = require("./source-discovery");
+const {
+  DEFAULT_RESULT_LIMIT: GEOGRAPHIC_RESULT_LIMIT,
+  discoverGeographicalBusinesses
+} = require("./geographical-discovery");
 const {
   INDIA_CITIES,
   INDIA_DISCOVERY_LOCATIONS,
@@ -37,8 +42,14 @@ const {
   refreshStoredLegitimacy
 } = require("./company-legitimacy");
 const { findBuyingIntentSignal } = require("./buying-signals");
-const { scoreLead } = require("./prospect-scoring");
-const { createLowerFitResearchTargets } = require("./lower-fit-research");
+const {
+  HIGH_POTENTIAL_SCORE_THRESHOLD,
+  scoreLead
+} = require("./prospect-scoring");
+const {
+  createLowerFitResearchTargets,
+  createStaleCompanyResearchTargets
+} = require("./lower-fit-research");
 const {
   DAILY_QUALIFIED_PROSPECT_TARGET,
   countDailyQualifiedProspects,
@@ -71,9 +82,10 @@ const MAX_RESULTS_PER_SEARCH = BRAVE_SEARCH_API_KEY ? 20 : (FIRECRAWL_API_KEY ? 
 const MAX_PAGES_PER_COMPANY = 8;
 const DISCOVERY_CRAWL_CONCURRENCY = Number(process.env.DISCOVERY_CRAWL_CONCURRENCY || 8);
 const AUTHENTICATED_SEARCH_CONCURRENCY = Number(process.env.AUTHENTICATED_SEARCH_CONCURRENCY || 3);
-const SCORE_VERSION = 5;
+const SCORE_VERSION = 9;
 const APP_USERNAME = process.env.APP_USERNAME || "";
 const APP_PASSWORD = process.env.APP_PASSWORD || "";
+const GOOGLE_TOKEN_ENCRYPTION_KEY = process.env.GOOGLE_TOKEN_ENCRYPTION_KEY || "";
 const IS_PRODUCTION = process.env.NODE_ENV === "production";
 
 if (!Number.isInteger(Number(PORT)) || Number(PORT) < 1 || Number(PORT) > 65535) {
@@ -81,6 +93,9 @@ if (!Number.isInteger(Number(PORT)) || Number(PORT) < 1 || Number(PORT) > 65535)
 }
 if (Boolean(APP_USERNAME) !== Boolean(APP_PASSWORD)) {
   throw new Error("APP_USERNAME and APP_PASSWORD must be configured together.");
+}
+if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
+  parseEncryptionKey(GOOGLE_TOKEN_ENCRYPTION_KEY);
 }
 if (IS_PRODUCTION && (!APP_USERNAME || !APP_PASSWORD)) {
   throw new Error("APP_USERNAME and APP_PASSWORD are required when NODE_ENV=production.");
@@ -204,6 +219,12 @@ function persistState() {
     companies: [...companies.values()],
     scrapedDomains: [...scrapedDomains].map(domain => ({ id: domain })),
     sourceCandidates: [...sourceCandidates.values()],
+    googleConnections: [...googleConnections.entries()].map(([sessionId, connection]) => ({
+      id: sessionId,
+      encryptedTokens: connection.encryptedTokens,
+      spreadsheetId: connection.spreadsheetId,
+      spreadsheetUrl: connection.spreadsheetUrl
+    })),
     discoveryState: { ...discoveryState, engine: engineState }
   });
 }
@@ -235,6 +256,14 @@ function restoreState() {
     if (company.legitimacy?.status !== "directory_only") scrapedDomains.add(domain);
   }
   for (const value of values(state.sourceCandidates)) sourceCandidates.set(value.id, value);
+  for (const value of values(state.googleConnections)) {
+    googleConnections.set(value.id, {
+      tokens: decryptOAuthTokens(value.encryptedTokens, GOOGLE_TOKEN_ENCRYPTION_KEY),
+      encryptedTokens: value.encryptedTokens,
+      spreadsheetId: value.spreadsheetId || "",
+      spreadsheetUrl: value.spreadsheetUrl || ""
+    });
+  }
   Object.assign(discoveryState, state.discoveryState || {});
   if (state.discoveryState?.engine) {
     Object.assign(engineState, state.discoveryState.engine);
@@ -349,6 +378,7 @@ app.use("/api", (req, res, next) => {
   next();
 });
 app.use(express.json({ limit: "1mb" }));
+app.get("/", (req, res) => res.redirect(302, "/platform.html"));
 app.use(express.static(path.join(__dirname, "public")));
 
 const crawlRateLimit = rateLimit({
@@ -495,7 +525,7 @@ function extract(text, sourceUrl, icp, companyNameOverride, directoryUrl, pageSo
   const automationIntent = Boolean(automationIntentEvidence);
 
   const expansionSignal =
-    /expansion|new branch|branches|new location|launch|rapid growth|scaling(?: up)?/i.test(text);
+    /expansion|new branch|branches|branch opening|branch opened|new location|new service|new product|acquisition|acquired|launch(?:ed)?|rapid growth|scaling(?: up)?/i.test(text);
 
   const languages = ["Hindi", "English", "Tamil", "Telugu", "Kannada", "Marathi", "Bengali", "Gujarati", "Malayalam", "Punjabi", "Odia"].filter(x =>
     lower.includes(x.toLowerCase())
@@ -513,8 +543,8 @@ function extract(text, sourceUrl, icp, companyNameOverride, directoryUrl, pageSo
   const callingTeam = /customer support team|customer service team|customer service representatives?|support agents?|sales team|sales representatives?|call center|contact center|telecallers?|telesales/i.test(text);
   const highCallVolume = /high[- ]volume calls?|large call volumes?|heavy call volumes?|thousands of calls|large customer base|millions of customers|peak (?:season|demand|shopping)|surge in (?:calls|enquiries|inquiries)|(?:hundreds|thousands|millions) of (?:customers|users|members)|serv(?:e|es|ing)\s+(?:over\s+)?\d[\d,.]*\s+(?:customers|users|members)/i.test(text);
   const extendedHours = dataHasExtendedHours(text);
-  const telephonyOrCrm = /crm|freshdesk|salesforce|hubspot|telephony|contact center platform/i.test(text);
-  const systemIntegrationSignal = /integrat(?:e|es|ed|ing|ion)|API|customer (?:database|records|information)|existing systems|sales tools|CRM workflow/i.test(text);
+  const telephonyOrCrm = /crm|freshdesk|salesforce|hubspot|zendesk|intercom|helpdesk|telephony|contact center platform|booking software/i.test(text);
+  const systemIntegrationSignal = /integrat(?:e|es|ed|ing|ion)|API|customer (?:database|records|information)|existing systems|sales tools|CRM workflow|booking software|helpdesk/i.test(text);
   const aiSolutionProvider = isAiSolutionProviderEvidence([{ title: "", description: text }]);
 
   const companyName = companyNameOverride ||
@@ -559,8 +589,8 @@ function extract(text, sourceUrl, icp, companyNameOverride, directoryUrl, pageSo
   if (extendedHours) addEvidence("extendedHours", /24\/7|24x7|around the clock|round.the.clock|extended hours|after.hours|outside normal business hours/i);
   if (indiaMarketSignal) addEvidence("indiaMarketFit", INDIA_GEOGRAPHIC_SIGNAL);
   if (multilingualSignal) addEvidence("multilingualFit", /multilingual|multiple languages|regional languages|local languages|dialects|accents|Hindi|Tamil|Telugu|Kannada|Marathi|Bengali|Gujarati|Malayalam|Punjabi|Odia/i);
-  if (telephonyOrCrm) addEvidence("existingCustomerSystems", /crm|freshdesk|salesforce|hubspot|telephony|contact center platform/i);
-  if (systemIntegrationSignal) addEvidence("integrationReadiness", /integrat(?:e|es|ed|ing|ion)|API|customer (?:database|records|information)|existing systems|sales tools|CRM workflow/i);
+  if (telephonyOrCrm) addEvidence("existingCustomerSystems", /crm|freshdesk|salesforce|hubspot|zendesk|intercom|helpdesk|telephony|contact center platform|booking software/i);
+  if (systemIntegrationSignal) addEvidence("integrationReadiness", /integrat(?:e|es|ed|ing|ion)|API|customer (?:database|records|information)|existing systems|sales tools|CRM workflow|booking software|helpdesk/i);
   if (email) evidence.push({
     field: "roleEmail",
     value: email,
@@ -602,6 +632,7 @@ function extract(text, sourceUrl, icp, companyNameOverride, directoryUrl, pageSo
     dakiniRecommendations: getDakiniRecommendations(detectedUseCases),
     locations,
     sourceText: text,
+    websiteWorkflowSignals: summarizeWebsiteWorkflowSignals(pageSources).workflows,
     callingTeam,
     branches,
     languages,
@@ -1176,7 +1207,10 @@ async function runDiscoveryJob(job) {
 
     const prospects = [...prospectsByDomain.values()]
       .filter(prospect => !isAiSolutionProviderEvidence(prospect.evidence))
-      .filter(prospect => hasRelevantDiscoveryEvidence(prospect.evidence))
+      .filter(prospect =>
+        job.kind === "manual_geographic_discovery" ||
+        hasRelevantDiscoveryEvidence(prospect.evidence)
+      )
       .sort((a, b) => scoreSearchEvidence(b.evidence) - scoreSearchEvidence(a.evidence) ||
         b.evidence.length - a.evidence.length)
       .filter(prospect =>
@@ -1232,8 +1266,12 @@ async function runDiscoveryJob(job) {
         if (companyRecord?.industry !== "Unknown" &&
             (job.allowNonIndianCompanies || indianCompany)) {
           job.companiesSaved += 1;
-          if (companyRecord.legitimacy?.canAutoQualify &&
-              ["Priority", "Review"].includes(companyRecord.score.tier)) {
+          const isQualifiedLead = companyRecord.legitimacy?.canAutoQualify &&
+            (job.dailyTargetEnabled
+              ? companyRecord.score.tier === "Priority" &&
+                companyRecord.score.score >= HIGH_POTENTIAL_SCORE_THRESHOLD
+              : ["Priority", "Review"].includes(companyRecord.score.tier));
+          if (isQualifiedLead) {
             job.qualifiedProspectsAdded += 1;
             engineState.totalProspectsFound += 1;
             if (companyRecord.score.tier === "Priority") job.newHighPotentialProspects += 1;
@@ -1245,7 +1283,7 @@ async function runDiscoveryJob(job) {
               sourceUrl: companyRecord.sourceUrl
             });
           } else {
-            recordEngineEvent("candidate_review", `Candidate held for legitimacy review: ${companyRecord.companyName} (${companyRecord.legitimacy?.status || "not assessed"} · ${companyRecord.legitimacy?.score || 0}/100 evidence · ${companyRecord.score.score}/100 ICP fit)`, {
+            recordEngineEvent("candidate_review", `Candidate not counted as a high-potential lead: ${companyRecord.companyName} (${companyRecord.score.tier} · ${companyRecord.score.score}/100 ICP fit · ${companyRecord.legitimacy?.status || "not assessed"} · ${companyRecord.legitimacy?.score || 0}/100 evidence)`, {
               companyName: companyRecord.companyName,
               tier: companyRecord.score.tier,
               score: companyRecord.score.score,
@@ -2022,7 +2060,12 @@ function saveCompany(pages, sourceUrl, icp, companyName, directoryUrl) {
   const preparedContext = prepareCompanyContext(pages, icp);
   const pageSources = preparedContext.pages
     .filter(page => page.sourceType !== "web search" && page.text)
-    .map(({ url, text, sourceType }) => ({ url, text, sourceType }));
+    .map(({ url, text, sourceType, websiteWorkflowSignals }) => ({
+      url,
+      text,
+      sourceType,
+      websiteWorkflowSignals
+    }));
   const text = pageSources.map(page => page.text).filter(Boolean).join(" | ");
   const record = extract(text, sourceUrl, icp, companyName, directoryUrl, pageSources);
   const companyStartEvidence = findCompanyStartYear(pages);
@@ -2055,6 +2098,7 @@ function saveCompany(pages, sourceUrl, icp, companyName, directoryUrl) {
     pages
   });
   record.capturedAt = new Date().toISOString();
+  record.lastResearchedAt = record.capturedAt;
   record.scoreVersion = SCORE_VERSION;
 
   const companyId = normalizeDomain(sourceUrl);
@@ -2078,6 +2122,12 @@ function recalculateStoredScores() {
       .map(([useCase]) => useCase);
     company.detectedUseCases = detectedUseCases;
     company.dakiniRecommendations = getDakiniRecommendations(detectedUseCases);
+    company.expansionSignal =
+      /expansion|new branch|branches|branch opening|branch opened|new location|new service|new product|acquisition|acquired|launch(?:ed)?|rapid growth|scaling(?: up)?/i.test(evidenceText);
+    company.telephonyOrCrm = Boolean(company.telephonyOrCrm) ||
+      /crm|freshdesk|salesforce|hubspot|zendesk|intercom|helpdesk|telephony|contact center platform|booking software/i.test(evidenceText);
+    company.systemIntegrationSignal = Boolean(company.systemIntegrationSignal) ||
+      /integrat(?:e|es|ed|ing|ion)|API|customer (?:database|records|information)|existing systems|sales tools|CRM workflow|booking software|helpdesk/i.test(evidenceText);
     const aiSolutionProvider = isAiSolutionProviderEvidence([{
       title: company.title || "",
       description: evidenceText
@@ -2101,12 +2151,13 @@ function recalculateStoredScores() {
       multilingualSignal: (company.languages || []).length >= 2 ||
         /multilingual|multiple languages|regional languages|local languages|dialects|accents/i.test(evidenceText),
       telephonyOrCrm: Boolean(company.telephonyOrCrm),
-      systemIntegrationSignal: /integrat(?:e|es|ed|ing|ion)|API|customer (?:database|records|information)|existing systems|sales tools|CRM workflow/i.test(evidenceText),
+      systemIntegrationSignal: Boolean(company.systemIntegrationSignal),
       automationIntent: buyingIntent,
       voiceHiringSignal: Boolean(company.voiceHiringSignal) ||
         /(?:hiring|careers|recruit(?:ing|ment)?).{0,60}(?:telecallers?|telesales|call center|contact center|customer support|customer service|support agents?|sales (?:agents?|representatives?))|(?:telecallers?|telesales|call center|contact center|customer support|customer service|support agents?|sales (?:agents?|representatives?)).{0,60}(?:hiring|careers|recruit(?:ing|ment)?)/i.test(evidenceText),
       expansionSignal: Boolean(company.expansionSignal),
       buyingSignal: company.buyingSignal,
+      websiteWorkflowSignals: company.websiteWorkflowAudit?.workflows || {},
       aiSolutionProvider
     }, broadIcp);
     company.scoreVersion = SCORE_VERSION;
@@ -2151,8 +2202,14 @@ function setGoogleSessionCookie(res, sessionId) {
   const secure = process.env.NODE_ENV === "production" ? "; Secure" : "";
   res.setHeader(
     "Set-Cookie",
-    `dakini_google_session=${sessionId}; HttpOnly; SameSite=Lax; Path=/; Max-Age=86400${secure}`
+    `dakini_google_session=${sessionId}; HttpOnly; SameSite=Lax; Path=/; Max-Age=2592000${secure}`
   );
+}
+
+function saveGoogleConnection(sessionId, connection) {
+  connection.encryptedTokens = encryptOAuthTokens(connection.tokens, GOOGLE_TOKEN_ENCRYPTION_KEY);
+  googleConnections.set(sessionId, connection);
+  persistState();
 }
 
 app.get("/api/config", (req, res) => res.json({
@@ -2241,7 +2298,16 @@ app.get("/api/discovery/status", (req, res) => {
     } : null,
     activeJob: activeJob ? {
       id: activeJob.id,
+      kind: activeJob.kind,
       status: activeJob.status,
+      currentActivity: activeJob.currentActivity || "",
+      geographicCity: activeJob.geographicCity || "",
+      geographicState: activeJob.geographicState || "",
+      geographicCountry: activeJob.geographicCountry || "",
+      geographicCategory: activeJob.geographicCategory || "",
+      geographicCandidatesFound: activeJob.geographicCandidatesFound || 0,
+      geographicSourceStats: activeJob.geographicSourceStats || {},
+      geographicSourceNotes: activeJob.geographicSourceNotes || [],
       searchesCompleted: activeJob.searchesCompleted,
       totalSearchQueries: activeJob.totalSearchQueries || DAILY_DISCOVERY_QUERIES_PER_RUN,
       companiesVisited: activeJob.companiesVisited,
@@ -2267,6 +2333,45 @@ app.get("/api/discovery/status", (req, res) => {
       ? AUTHENTICATED_SEARCH_CONCURRENCY
       : 1,
     engine: engineState
+  });
+});
+
+app.get("/api/operations/diagnostics", (req, res) => {
+  const allJobs = [...jobs.values()];
+  const statusCounts = {};
+  for (const job of allJobs) {
+    statusCounts[job.status] = (statusCounts[job.status] || 0) + 1;
+  }
+  const recentJobs = allJobs.slice(-10).reverse().map(job => ({
+    id: job.id,
+    kind: job.kind,
+    status: job.status,
+    startedAt: job.startedAt || null,
+    completedAt: job.completedAt || null,
+    errorCount: Array.isArray(job.errors) ? job.errors.length : 0
+  }));
+  let databaseStatus = "ok";
+  try {
+    if (!stateStore.healthCheck()) databaseStatus = "unavailable";
+  } catch {
+    databaseStatus = "unavailable";
+  }
+  res.json({
+    status: databaseStatus === "ok" ? "ok" : "degraded",
+    uptimeSeconds: Math.floor(process.uptime()),
+    database: databaseStatus,
+    jobs: {
+      total: allJobs.length,
+      active: allJobs.filter(job => ["running", "queued"].includes(job.status)).length,
+      byStatus: statusCounts,
+      recent: recentJobs
+    },
+    discovery: {
+      activeJobId: discoveryState.activeJobId,
+      activeSourceDiscoveryJobId: discoveryState.activeSourceDiscoveryJobId,
+      lastRunAt: discoveryState.lastRunAt,
+      lastError: discoveryState.lastError || ""
+    }
   });
 });
 
@@ -2397,6 +2502,96 @@ app.post("/api/discovery/run-now", crawlRateLimit, (req, res) => {
   discoveryState.activeJobId = job.id;
   persistState();
   void backgroundTasks.track(runDiscoveryJob(job), "Manual web discovery");
+  res.status(202).json({ id: job.id, status: job.status });
+});
+
+app.post("/api/geographic-discovery/run-now", crawlRateLimit, (req, res) => {
+  if (discoveryState.activeJobId || hasActiveCrawlJob()) {
+    return res.status(409).json({ error: "A discovery or company crawl is already running." });
+  }
+  const parsed = z.object({
+    city: z.string().trim().min(1).max(100),
+    state: z.string().trim().max(100).default(""),
+    country: z.string().trim().min(1).max(100).default("India"),
+    category: z.string().trim().min(1).max(100).default("all"),
+    limit: z.number().int().min(1).max(200).default(GEOGRAPHIC_RESULT_LIMIT)
+  }).strict().safeParse(req.body || {});
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+  const job = {
+    id: id(),
+    kind: "manual_geographic_discovery",
+    status: "queued",
+    anyLocation: true,
+    allowNonIndianCompanies: true,
+    dailyTargetEnabled: false,
+    geographicCity: parsed.data.city,
+    geographicState: parsed.data.state,
+    geographicCountry: parsed.data.country,
+    geographicCategory: parsed.data.category,
+    geographicResultLimit: parsed.data.limit,
+    geographicCandidatesFound: 0,
+    geographicSourceStats: {},
+    geographicSourceNotes: [],
+    searchQueries: [],
+    discoveredCompanies: [],
+    completedCompanyDomains: [],
+    searchResults: 0,
+    searchesCompleted: 0,
+    totalSearchQueries: 0,
+    pages: 0,
+    records: 0,
+    companiesVisited: 0,
+    companiesSaved: 0,
+    qualifiedProspectsAdded: 0,
+    newHighPotentialProspects: 0,
+    errors: []
+  };
+  jobs.set(job.id, job);
+  discoveryState.activeJobId = job.id;
+  persistState();
+  void backgroundTasks.track((async () => {
+    try {
+      job.currentActivity = `Looking up ${parsed.data.category} businesses in ${parsed.data.city} on OpenStreetMap`;
+      const discovery = await discoverGeographicalBusinesses({
+        city: parsed.data.city,
+        state: parsed.data.state,
+        country: parsed.data.country,
+        category: parsed.data.category,
+        limit: parsed.data.limit
+      });
+      job.geographicSourceStats = discovery.sourceStats;
+      job.geographicSourceNotes = discovery.notes;
+      const candidates = discovery.businesses;
+      const query = `${parsed.data.city} ${parsed.data.state} ${parsed.data.country} ${parsed.data.category} geographic business discovery`;
+      job.discoveredCompanies = candidates
+        .filter(candidate => isEligibleProspectUrl(candidate.url))
+        .map(candidate => ({
+          domain: normalizeDomain(candidate.url),
+          url: new URL(candidate.url).origin,
+          evidence: (candidate.sourceCitations || [candidate.sourceUrl]).map(sourceUrl => ({
+            url: sourceUrl,
+            title: candidate.title,
+            description: `${candidate.description} Discovery source: ${candidate.source}.`,
+            query,
+            queries: [query]
+          }))
+        }));
+      job.geographicCandidatesFound = job.discoveredCompanies.length;
+      job.searchResults = job.geographicCandidatesFound;
+      persistState();
+      await runDiscoveryJob(job);
+    } catch (error) {
+      job.status = "failed";
+      job.completedAt = new Date().toISOString();
+      job.error = error.message;
+      job.errors.push({ provider: "OpenStreetMap Overpass", reason: error.message });
+      discoveryState.lastError = error.message;
+      if (discoveryState.activeJobId === job.id) discoveryState.activeJobId = null;
+      persistState();
+      console.error(`Geographic discovery failed: ${error.message}`);
+    }
+  })(), "OpenStreetMap geographic discovery");
   res.status(202).json({ id: job.id, status: job.status });
 });
 
@@ -2541,7 +2736,7 @@ app.get("/auth/google/callback", async (req, res) => {
   try {
     const oauth = createGoogleOAuthClient();
     const { tokens } = await oauth.getToken(req.query.code);
-    googleConnections.set(sessionId, { tokens, spreadsheetId: "", spreadsheetUrl: "" });
+    saveGoogleConnection(sessionId, { tokens, spreadsheetId: "", spreadsheetUrl: "" });
     res.redirect("/?google=connected");
   } catch (error) {
     console.error("Google OAuth callback failed:", error.message);
@@ -2562,7 +2757,7 @@ app.post("/api/google/sheets", async (req, res) => {
     oauth.setCredentials(connection.tokens);
     oauth.on("tokens", tokens => {
       connection.tokens = { ...connection.tokens, ...tokens };
-      googleConnections.set(sessionId, connection);
+      saveGoogleConnection(sessionId, connection);
     });
     const sheets = google.sheets({ version: "v4", auth: oauth });
     let spreadsheetId = connection.spreadsheetId;
@@ -2577,6 +2772,7 @@ app.post("/api/google/sheets", async (req, res) => {
       spreadsheetId = created.data.spreadsheetId;
       connection.spreadsheetId = spreadsheetId;
       connection.spreadsheetUrl = created.data.spreadsheetUrl;
+      saveGoogleConnection(sessionId, connection);
     }
 
     const values = [
@@ -2645,7 +2841,7 @@ app.post("/api/google/sheets", async (req, res) => {
       requestBody: { values }
     });
 
-    googleConnections.set(sessionId, connection);
+    saveGoogleConnection(sessionId, connection);
     res.json({
       spreadsheetUrl: connection.spreadsheetUrl,
       rows: companiesToSync.length
@@ -2812,7 +3008,10 @@ async function runLowerFitResearch(job) {
 
   job.status = "running";
   job.startedAt ||= new Date().toISOString();
-  job.currentActivity = "Rechecking saved company websites and refreshing evidence";
+  const staleResearch = job.kind === "stale_lead_research";
+  job.currentActivity = staleResearch
+    ? "Rechecking stale saved company websites and refreshing evidence"
+    : "Rechecking saved company websites and refreshing evidence";
   const completedTargetIds = new Set(job.completedTargetIds || []);
   const broadIcp = { industries: [], locations: [], useCases: [], anyLocation: true };
   const targets = job.targets.filter(target => !completedTargetIds.has(target.id));
@@ -2849,6 +3048,7 @@ async function runLowerFitResearch(job) {
           if (refreshedRecord && originalCapturedAt) {
             refreshedRecord.capturedAt = originalCapturedAt;
           }
+          if (refreshedRecord) refreshedRecord.lastResearchedAt = new Date().toISOString();
           job.researchedCompanies += 1;
           if (originalTier === "Low fit" && record.score.tier === "Priority") {
             job.upgradedToPriority += 1;
@@ -2861,7 +3061,9 @@ async function runLowerFitResearch(job) {
       completedTargetIds.add(target.id);
       job.completedTargetIds = [...completedTargetIds];
       job.completedTargets = completedTargetIds.size;
-      job.currentActivity = `Researched ${job.completedTargets}/${job.totalTargets} lower-fit prospects`;
+      job.currentActivity = staleResearch
+        ? `Rechecked ${job.completedTargets}/${job.totalTargets} stale prospects`
+        : `Researched ${job.completedTargets}/${job.totalTargets} lower-fit prospects`;
       persistState();
     });
 
@@ -2871,16 +3073,20 @@ async function runLowerFitResearch(job) {
     } else {
       job.status = job.errors.length ? "completed_with_errors" : "completed";
       job.completedAt = new Date().toISOString();
-      job.currentActivity = `Lower-fit research complete: ${job.researchedCompanies}/${job.totalTargets} sites refreshed`;
+      job.currentActivity = staleResearch
+        ? `Stale-lead refresh complete: ${job.researchedCompanies}/${job.totalTargets} sites refreshed`
+        : `Lower-fit research complete: ${job.researchedCompanies}/${job.totalTargets} sites refreshed`;
       recordEngineEvent(
         "info",
-        `Lower-fit re-research complete: ${job.researchedCompanies}/${job.totalTargets} sites refreshed; ${job.upgradedToReview + job.upgradedToPriority} upgraded to Research or High potential`
+        staleResearch
+          ? `Stale-lead refresh complete: ${job.researchedCompanies}/${job.totalTargets} sites refreshed`
+          : `Lower-fit re-research complete: ${job.researchedCompanies}/${job.totalTargets} sites refreshed; ${job.upgradedToReview + job.upgradedToPriority} upgraded to Research or High potential`
       );
     }
   } catch (error) {
     job.status = "failed";
     job.completedAt = new Date().toISOString();
-    job.error = `Lower-fit research failed: ${error.message}`;
+    job.error = `${staleResearch ? "Stale-lead refresh" : "Lower-fit research"} failed: ${error.message}`;
     console.error(job.error);
   } finally {
     job.currentTargets = [];
@@ -2895,6 +3101,13 @@ app.get("/api/jobs/:jobId", (req, res) => {
     id: job.id,
     kind: job.kind,
     status: job.status,
+    geographicCity: job.geographicCity || "",
+    geographicState: job.geographicState || "",
+    geographicCountry: job.geographicCountry || "",
+    geographicCategory: job.geographicCategory || "",
+    geographicCandidatesFound: job.geographicCandidatesFound || 0,
+    geographicSourceStats: job.geographicSourceStats || {},
+    geographicSourceNotes: job.geographicSourceNotes || [],
     totalTargets: job.totalTargets || 0,
     completedTargets: job.completedTargets || 0,
     researchedCompanies: job.researchedCompanies || 0,
@@ -2923,7 +3136,8 @@ app.post("/api/companies/research-lower-fit", crawlRateLimit, (req, res) => {
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
   const activeJob = [...jobs.values()].find(job =>
-    job.kind === "lower_fit_research" && ["queued", "running"].includes(job.status)
+    ["lower_fit_research", "stale_lead_research"].includes(job.kind) &&
+    ["queued", "running"].includes(job.status)
   );
   if (activeJob) {
     return res.status(409).json({
@@ -2986,6 +3200,71 @@ app.post("/api/companies/research-lower-fit", crawlRateLimit, (req, res) => {
     kind: job.kind,
     status: job.status,
     totalTargets: job.totalTargets,
+    skippedInvalidUrl: job.skippedInvalidUrl,
+    skippedDuplicateDomain: job.skippedDuplicateDomain
+  });
+});
+
+app.post("/api/companies/research-stale", crawlRateLimit, (req, res) => {
+  const parsed = z.object({
+    staleAfterDays: z.number().int().min(1).max(3650).default(90)
+  }).strict().safeParse(req.body || {});
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+  const activeJob = [...jobs.values()].find(job =>
+    ["lower_fit_research", "stale_lead_research"].includes(job.kind) &&
+    ["queued", "running"].includes(job.status)
+  );
+  if (activeJob) {
+    return res.status(409).json({
+      error: "A saved-company re-research job is already queued or running.",
+      jobId: activeJob.id
+    });
+  }
+
+  const selection = createStaleCompanyResearchTargets(companies.values(), {
+    staleAfterDays: parsed.data.staleAfterDays
+  });
+  if (!selection.targets.length) {
+    return res.status(409).json({
+      error: `No saved prospects older than ${selection.staleAfterDays} days with valid HTTP(S) company websites are available to research.`,
+      skippedInvalidUrl: selection.skippedInvalidUrl,
+      skippedDuplicateDomain: selection.skippedDuplicateDomain
+    });
+  }
+
+  const timestamp = new Date().toISOString();
+  const job = {
+    id: id(),
+    kind: "stale_lead_research",
+    staleAfterDays: selection.staleAfterDays,
+    status: "queued",
+    createdAt: timestamp,
+    startedAt: timestamp,
+    targets: selection.targets,
+    totalTargets: selection.targets.length,
+    completedTargets: 0,
+    completedTargetIds: [],
+    researchedCompanies: 0,
+    upgradedToReview: 0,
+    upgradedToPriority: 0,
+    skippedInvalidUrl: selection.skippedInvalidUrl,
+    skippedDuplicateDomain: selection.skippedDuplicateDomain,
+    pages: 0,
+    records: 0,
+    companiesVisited: 0,
+    currentTargets: [],
+    errors: []
+  };
+  jobs.set(job.id, job);
+  persistState();
+  void backgroundTasks.track(runLowerFitResearch(job), "Stale-lead refresh");
+  res.status(202).json({
+    id: job.id,
+    kind: job.kind,
+    status: job.status,
+    totalTargets: job.totalTargets,
+    staleAfterDays: job.staleAfterDays,
     skippedInvalidUrl: job.skippedInvalidUrl,
     skippedDuplicateDomain: job.skippedDuplicateDomain
   });
@@ -3178,7 +3457,7 @@ async function resumeInterruptedAutomation() {
     try {
       if (job.directoryRetrieval || job.kind.includes("public_directory_retrieval")) {
         await runScheduledPublicDirectoryRetrieval(job.kind, job);
-      } else if (job.kind === "lower_fit_research") {
+      } else if (["lower_fit_research", "stale_lead_research"].includes(job.kind)) {
         await runLowerFitResearch(job);
       } else if (job.kind.endsWith("_web_discovery")) {
         if (job.dailyTargetEnabled || job.kind === "daily_web_discovery" ||
@@ -3198,7 +3477,7 @@ async function resumeInterruptedAutomation() {
       if (discoveryState.activeSourceDiscoveryJobId === job.id) {
         discoveryState.activeSourceDiscoveryJobId = null;
       }
-      if (job.kind === "lower_fit_research") {
+      if (["lower_fit_research", "stale_lead_research"].includes(job.kind)) {
         recordEngineEvent("error", job.error, { jobId: job.id });
       } else {
         discoveryState.lastSourceDiscoveryError = job.error;
